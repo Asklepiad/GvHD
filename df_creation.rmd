@@ -1,0 +1,103 @@
+---
+title: "df_creation_bs"
+author: "Bogdan Sotnikov"
+date: '2023-11-15'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+lapply(c("glue", "tidyverse", "openxlsx", "readxl"), require, character.only=TRUE)
+```
+
+# Notes:
+1. All whitespaces changed to underscores.
+2. File вид_ТГСК.xlsx переименован в gvhd_type.xlsx
+
+
+# Data reading 
+
+```{r}
+files_dd <- list.files(path = "./raw_data/3_Derivable_Datasets/", pattern = ".xls", all.files = FALSE, full.names = FALSE)
+fdd <- do.call("<-", list(files_dd, sapply(files_dd, 
+                                   function(x) read.xlsx(paste0("./raw_data/3_Derivable_Datasets/", x ), na.strings = NA))))
+
+names(fdd) <- str_split_i(names(fdd), "\\.", 1)
+
+## У файлов из второй папки общая "болезнь" -- пояснительная строка под названием столбцов
+## Я не нашел тривиального решения в коде, поэтому просто убрал эту строку в экселях
+
+files_fet <- list.files(path = "./raw_data/Final_export_tables/", pattern = ".xls", all.files = FALSE, full.names = FALSE)
+fnet <- do.call("<-", list(files_fet, sapply(files_fet, 
+                                   function(x) read.xlsx(paste0("./raw_data/Final_export_tables/", x), na.strings = NA, startRow = 1))))
+
+names(fnet) <- str_split_i(names(fnet), "\\.", 1)
+```
+
+# Dataframe building
+
+Начнем ~~плясать от печки~~ собирать датасет от файла с демографическими данными.
+Затем добавим все сырые файлы, в которых единицей наблюдения является пациент (это датафреймы с данными о показаниях к пересадке, профилактикой, лечением и выживаемостью)
+```{r}
+# Если вы не убирали вторую строку в экселях, раскомментируйте концы строчек кода ниже (и уберите лишнюю запятую)
+common_df <- left_join(left_join(left_join(left_join(fnet$DM_20230119_120304, # %>% slice(-1),
+                       fnet$TU_20230119_120304 %>% select(!SITE), # %>% slice(-1),
+                       by = "SUBJID"),
+                       fnet$PREV_20230119_120304 %>% select(!SITE), # %>% slice(-1),
+                       by = "SUBJID"),
+                       fnet$TR_20230119_120304 %>% select(!SITE), # %>% slice(-1),
+                       by = "SUBJID"),
+                       fnet$STAT_20230119_120304 %>% select(!SITE), # %>% slice(-1),
+                       by = "SUBJID")
+```
+
+Посмотрим, что получилось
+```{r}
+str(common_df)
+```
+
+У нас все в формате строк. Не комильфо. Переведем в нужный формат.
+
+```{r}
+common_df <- common_df %>% 
+  mutate(
+    SITE = SITE %>% as.factor(),
+    BIRTHDTC = format(as.Date(BIRTHDTC, format = "%d/%m/%Y"), "%d.%m.%Y") ,
+    SEX = SEX %>% as.factor() ,
+    ICD = ICD %>% as.factor() ,
+    TUTERM = TUTERM %>% as.factor() ,
+    LLTC = LLTC %>% as.numeric() ,
+    LLTN = LLTN %>% as.factor() ,
+    PTC = PTC %>% as.numeric() ,
+    PTN = PTN %>% as.factor() ,
+    PSOCC = PSOCC %>% as.numeric() ,
+    PSOCN = PSOCN %>% as.factor() ,
+    PRSTDTC = format(as.Date(PRSTDTC, format = "%d/%m/%Y"), "%d.%m.%Y") , 
+    TIMGDOSE = TIMGDOSE %>% as.numeric() ,
+    HATGDOSE = HATGDOSE %>% as.numeric() ,
+    PRENDTC =  format(as.Date(PRENDTC, format = "%d/%m/%Y"), "%d.%m.%Y") ,
+    TRNUM = TRNUM %>% as.numeric() ,
+    TRTYPE = TRTYPE %>% as.factor() ,
+    TRDTC =  format(as.Date(TRDTC, format = "%d/%m/%Y"), "%d.%m.%Y") ,
+    TRSOURCE = TRSOURCE %>% as.factor() ,
+    CONDTYPE = CONDTYPE %>% as.factor() ,
+    PTSTAT = PTSTAT %>% as.factor() ,
+    LCDTC = format(as.Date(LCDTC, format = "%d/%m/%Y"), "%d.%m.%Y") ,
+    DEATHDTC = format(as.Date(DEATHDTC, format = "%d/%m/%Y"), "%d.%m.%Y") ,
+    RELAPYN = RELAPYN %>% as.factor(),
+    RELAPDTC = format(as.Date(RELAPDTC, format = "%d/%m/%Y"), "%d.%m.%Y")
+  )
+```
+Теперь посмотрим, где в данных могут быть проблемы, а где NA
+
+```{r}
+
+```
+
+
+```{r}
+## Добавим датасет по факту наличия той или иной формы РТПХ
+table(fnet$GVHD_20230119_120304$GVHDYN)
+common_df
+```
+

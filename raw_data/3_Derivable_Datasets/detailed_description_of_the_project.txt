@@ -1,0 +1,25 @@
+The data set is based on retrospective multicenter study in 193 patients with GVHD sho were diagnosed in 4 hematopoietic stem cell transplantation (HSCT) centers and developed acute or chronic form of immune complication - graft versus host disease (GVHD). Single patient may have developed wither acute form, or chronic, or both. Acute and chronic GVHD have severity grades and start dates named 'Start date of therapy'. 
+
+Information was collected on lines of therapy (start, end, type of therapy, response). 
+
+The outcome measeures - none relapse mortality (primary) and overall survival, cumulative relapse incidence, cumulative incidence of steroid refractory acute GVHD, cumulative incidence of steroid refractory chronic GVHD (secondary). 
+
+Effecting factors: 
+- Age at Transplantation
+- Number of allogenic transplant after which GVHD was registered
+- Allogeneic transplant type
+- ICD-10 Code
+- Allogenic transplant source
+- Conditioning scheme
+- Conditioning type
+- Flag of Cross Syndrome
+- GVHD prevention scheme
+
+Additional analyisis: 
+
+Probability of acute and cGHVD based on above factors above : 
+files AGVHD_20230119_120304
+CGVHD_20230119_120304
+
+contatin information on all patietns allografted in the study perior and development of GVHD. The cumulative incidences should be stratified per "Allogeneic transplant type". The analysis should include the factors above  just as for NRM. 
+
