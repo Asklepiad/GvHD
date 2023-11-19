@@ -66,11 +66,11 @@ common_df <- common_df %>%
     SEX = SEX %>% as.factor() ,
     ICD = ICD %>% as.factor() ,
     TUTERM = TUTERM %>% as.factor() ,
-    LLTC = LLTC %>% as.numeric() ,
+    LLTC = LLTC %>% as.factor() ,
     LLTN = LLTN %>% as.factor() ,
-    PTC = PTC %>% as.numeric() ,
+    PTC = PTC %>% as.factor() ,
     PTN = PTN %>% as.factor() ,
-    PSOCC = PSOCC %>% as.numeric() ,
+    PSOCC = PSOCC %>% as.factor() ,
     PSOCN = PSOCN %>% as.factor() ,
     PRSTDTC = format(as.Date(PRSTDTC, format = "%d/%m/%Y"), "%d.%m.%Y") , 
     TIMGDOSE = TIMGDOSE %>% as.numeric() ,
@@ -91,13 +91,19 @@ common_df <- common_df %>%
 Теперь посмотрим, где в данных могут быть проблемы, а где NA
 
 ```{r}
-
+summary(common_df)
 ```
 
 
 ```{r}
 ## Добавим датасет по факту наличия той или иной формы РТПХ
-table(fnet$GVHD_20230119_120304$GVHDYN)
-common_df
+agvhd <- fnet$AGVHD_20230119_120304 %>% 
+  pivot_wider(names_from = AGVHDLOC,
+              values_from = AGVHDST) %>% 
+  group_by(SUBJID) %>% 
+  mutate(across(everything(), function(x) max(x, na.rm=TRUE))) %>% 
+  ungroup() %>% 
+  distinct(SUBJID, .keep_all = TRUE) %>% 
+  select(!`NA`)
 ```
 
