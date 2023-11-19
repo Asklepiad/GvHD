@@ -51,6 +51,45 @@ common_df <- left_join(left_join(left_join(left_join(fnet$DM_20230119_120304, # 
                        by = "SUBJID")
 ```
 
+```{r}
+## Добавим датасет по факту наличия той или иной формы РТПХ
+## Предварительно упростим их и переведем в широкий формат
+
+agvhd <- fnet$AGVHD_20230119_120304 %>% 
+  pivot_wider(names_from = AGVHDLOC,
+              values_from = AGVHDST) %>% 
+  group_by(SUBJID) %>% 
+  mutate(across(everything(), function(x) max(x, na.rm=TRUE))) %>% 
+  ungroup() %>% 
+  distinct(SUBJID, .keep_all = TRUE) %>% 
+  select(!`NA`)
+
+cgvhd <- fnet$CGVHD_20230119_120304 %>% 
+  pivot_wider(names_from = CGVHDLOC,
+              values_from = DAMDEG) %>% 
+  group_by(SUBJID) %>% 
+  mutate(across(everything(), function(x) max(x, na.rm=TRUE))) %>% 
+  ungroup() %>% 
+  distinct(SUBJID, .keep_all = TRUE) %>% 
+  select(-c(`NA`, TYPEOTH))
+
+fgvhd <- fnet$GVHD_20230119_120304 %>% 
+  pivot_wider(names_from = GVHDCAT, values_from = GVHDYN) %>% 
+  filter(!is.na(GVHDDTC))
+
+## Объединим с уже имеющимися данными
+
+common_df <- left_join(left_join(left_join(common_df, 
+                       agvhd %>% select(!SITE), 
+                       by="SUBJID"),
+                       cgvhd %>% select(!SITE),
+                       by="SUBJID"),
+                       fgvhd %>% select(!SITE),
+                       by="SUBJID")
+```
+
+Для нашего текущего датафрейма единица наблюдения -- наличие одного из типов РТПХ у одного пациента.
+
 Посмотрим, что получилось
 ```{r}
 str(common_df)
@@ -96,14 +135,8 @@ summary(common_df)
 
 
 ```{r}
-## Добавим датасет по факту наличия той или иной формы РТПХ
-agvhd <- fnet$AGVHD_20230119_120304 %>% 
-  pivot_wider(names_from = AGVHDLOC,
-              values_from = AGVHDST) %>% 
-  group_by(SUBJID) %>% 
-  mutate(across(everything(), function(x) max(x, na.rm=TRUE))) %>% 
-  ungroup() %>% 
-  distinct(SUBJID, .keep_all = TRUE) %>% 
-  select(!`NA`)
+fnet$CM_20230119_120304
+  
 ```
+
 
