@@ -1,0 +1,202 @@
+---
+title: "GvHD_df"
+author: "Ivan Lebedev"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(readxl)
+library(openxlsx)
+library(stringi)
+```
+
+#Сохранение датасетов
+
+```{r}
+files_fet <- list.files(path = "./Final export tables/", pattern = NULL, all.files = FALSE, full.names = FALSE)
+
+DM <- read.xlsx(paste0("./Final export tables/", files_fet[grepl("DM", files_fet)]) , na.strings = NA) # Демографические данные
+
+TR <- read.xlsx(paste0("./Final export tables/", files_fet[grepl("TR", files_fet)]) , na.strings = NA) # Параметры технологии трансплантации
+
+PREV <- read.xlsx(paste0("./Final export tables/", files_fet[grepl("PREV", files_fet)]) , na.strings = NA) # Профилактика РТПХ
+
+STAT <- read.xlsx(paste0("./Final export tables/", files_fet[grepl("STAT", files_fet)]) , na.strings = NA) # Показатели общей выживаемости и рецидивов
+
+TU <- read.xlsx(paste0("./Final export tables/", files_fet[grepl("TU", files_fet)]) , na.strings = NA) # Основной диагноз (показание к трансплантации)
+
+GVHD <- read.xlsx("./Final export tables/GVHD_20230119_120304.xlsx", na.strings = NA) # Факт острой РТПХ
+
+CGVHD <- read.xlsx(paste0("./Final export tables/", files_fet[grepl("CGVHD", files_fet)]) , na.strings = NA) # Характеристики хронической РТПХ
+
+AGVHD <- read.xlsx(paste0("./Final export tables/", files_fet[grepl("AGVHD", files_fet)]) , na.strings = NA) # Характеристики острой РТПХ
+```
+
+# Сбор единого датасета
+
+Последовательное соединяем датасеты, в которых для каждого пациента данные находятся в одной строке, объединять начинаем с датасета DM.
+
+```{r}
+fin_df <-  
+  left_join(DM %>% 
+              slice(-1),
+            TU %>% 
+              select(!SITE) %>% 
+              slice(-1), by = "SUBJID") # TU к DM
+fin_df <-  
+  left_join(fin_df,
+            PREV %>% 
+              select(!SITE) %>% 
+              slice(-1), by = "SUBJID") # PREV к fin_df
+
+fin_df <-  
+  left_join(fin_df,
+            TR %>% 
+              select(!SITE) %>% 
+              slice(-1), by = "SUBJID") # TR к fin_df
+
+fin_df <-  
+  left_join(fin_df,
+            STAT %>% 
+              select(!SITE) %>% 
+              slice(-1), by = "SUBJID") # STAT к fin_df
+```
+
+# Переводим в GVHD, AGVHD, CGVHD в широкий формат, поскольку в них данные для одного пациента не единичны.
+
+```{r}
+GVHD <- 
+  GVHD %>% 
+  slice(-1) %>%
+  pivot_wider(names_from = GVHDCAT, 
+              values_from = GVHDYN) %>% # Широкий формат
+  select(-GVHDOTHM) %>% # Пустая колонка
+  group_by(SUBJID) %>% # Получаем две строки для одного пациента, в одной страке присутсвует только одно значение, остальное NA
+  summarize(across(c("SITE","GVHDDTC","GVHDAGE","GVHDMETH","Acute GVHD","Chronic GVHD","Cross syndrome"), ~toString(unique(na.omit(.x)))),.groups = 'drop') # Объединяем строки, удаляя NA, получаем широкий датасет
+
+AGVHD <- 
+  AGVHD %>% 
+  slice(-1) %>% 
+  pivot_wider(names_from = AGVHDLOC,
+              values_from = AGVHDST,
+              names_prefix = "Acute_") %>% # Широкий формат
+  select(!Acute_NA) %>% # Пустая колонка
+  group_by(SUBJID) %>% # Получаем две строки для одного пациента, в одной страке присутсвует только одно значение, остальное NA
+  summarize(across(c("SITE","AGVHDOCC","Acute_Liver","Acute_Lower gastrointestinal tract","AGVHDGR","Acute_Skin","Acute_Upper gastrointestinal tract"), ~toString(unique(na.omit(.x)))),.groups = 'drop') # Объединяем строки, удаляя NA, получаем широкий датасет
+
+CGVHD <- 
+  CGVHD %>% 
+  slice(-1) %>% 
+  pivot_wider(names_from = CGVHDLOC,
+              values_from = DAMDEG,
+              names_prefix = "Chronic_") %>% # Широкий формат
+  select(-Chronic_NA,-TYPEOTH) %>% # Пустая колонка
+  group_by(SUBJID) %>% # Получаем две строки для одного пациента, в одной страке присутсвует только одно значение, остальное NA
+  summarize(across(c("SITE","CGVHDOCC","PTSTAT","SEVTYPE","SEVGRADE","Chronic_Skin involvement, % lesion of body surface area","Chronic_Sclerotic changes of the skin", "Chronic_Changes in oral cavity", "Chronic_Eyes", "Chronic_Gastrointestinal tract", "Chronic_Liver", "Chronic_Lungs", "Chronic_Lungs functional assessment", "Chronic_Joints and fascia", "Chronic_Sex organs"), ~toString(unique(na.omit(.x)))),.groups = 'drop') # Объединяем строки, удаляя NA, получаем широкий датасет
+```
+
+# Присоединяем GVHD, AGVHD, CGVHD к единому датасету
+
+```{r}
+fin_df <-  
+  left_join(fin_df,
+            GVHD %>% 
+              select(!SITE), by = "SUBJID") # GVHD к fin_df
+
+fin_df <-  
+  left_join(fin_df,
+            AGVHD %>% 
+              select(!SITE), by = "SUBJID") # AGVHD к fin_df
+
+fin_df <-  
+  left_join(fin_df,
+            CGVHD %>% 
+              select(!SITE), by = "SUBJID") # CGVHD к fin_df
+```
+
+# Замена значений
+
+Во всех очевыдных случаях текст "yes", "no" заменялся на 1 и 0 соответсвенно (логика иссход или его отсутсвие), жив-мертв, аналогично, 0 и 1 соответссвсено, смерть считалась исходом. В случае SEVGRADE значения присваивались по уровню тяжести от легкого к тяжелому, от 1 к 3 соответсвенно.
+
+```{r}
+fin_df <-
+  fin_df %>% 
+  mutate(RELAPYN = ifelse(
+   RELAPYN == "yes", 
+   RELAPYN <-  1,
+   RELAPYN <-  0)) %>% 
+  mutate(`Acute GVHD` = ifelse(
+   `Acute GVHD` == "yes", 
+   `Acute GVHD` <-  1,
+   `Acute GVHD` <-  0)) %>% 
+  mutate(`Chronic GVHD` = ifelse(
+   `Chronic GVHD` == "yes", 
+   `Chronic GVHD` <-  1,
+   `Chronic GVHD` <-  0)) %>% 
+   mutate(`Cross syndrome` = case_when(
+   `Cross syndrome` == "yes" ~ 1, 
+   `Cross syndrome` == "no" ~ 0,
+   `Cross syndrome` == "" ~ NA,
+   `Cross syndrome` == "no data" ~ NA)) %>% 
+  select(-AGVHDOCC,-CGVHDOCC) %>% 
+  mutate(PTSTAT.x = case_when(
+   PTSTAT.x == "alive" ~ 0, 
+   PTSTAT.x == "died" ~ 1,
+   PTSTAT.x == "unknown" ~ NA)) %>% 
+  mutate(SEVGRADE = case_when(
+   SEVGRADE == "severe" ~ 3, 
+   SEVGRADE == "moderate" ~ 2,
+   SEVGRADE == "mild" ~ 1,
+   SEVGRADE == NA ~ NA))
+```
+
+# Работа по переименованию
+
+```{r}
+fin_df <-
+  fin_df %>% 
+  rename_with(function(x) x %>% 
+  stri_replace_all_regex(" ","_")) %>% # Убираем пробелы и заменяем на _ для простоты обращения к колонкам.
+  rename(Final_patient_Status = PTSTAT.x) %>%  # В таблицах были колонки с одним названием, но разным смыслом, PTSTAT.x содержит данные о финальном исходе, переименовываем ее в Final_patient_Status.
+  rename(PTSTAT = PTSTAT.y) %>% # PTSTAT.x содержит данные о функциональном состоянии больного на момент обследования, переименовываем ее в PTSTAT.
+  unite("LLT", LLTC, LLTN, sep = " ") %>% # Объединяем колонки с кодом и названием для трех переменных, на мой взгляд это урезает датасет, при этом без потери информации, не должно повлиять на дальнейший анализ.
+  unite("PT", PTC, PTN, sep = " ") %>% # Объединяем колонки с кодом и названием для трех переменных, на мой взгляд это урезает датасет, при этом без потери информации, не должно повлиять на дальнейший анализ.
+  unite("PSOC", PSOCC, PSOCN, sep = " ") %>% # Объединяем колонки с кодом и названием для трех переменных, на мой взгляд это урезает датасет, при этом без потери информации, не должно повлиять на дальнейший анализ.
+  rename(Chronic_Skin_involvement = `Chronic_Skin_involvement,_%_lesion_of_body_surface_area`) # Переименование для простоты.
+```
+
+# Переводим переменные в факторы, там где это возможно и очевидно, без создания факторов с большим числом уровней.
+
+```{r}
+fin_df <-
+  fin_df %>%
+  mutate(across(c(TIMGDOSE, HATGDOSE, TRNUM, Final_patient_Status, RELAPYN, Acute_GVHD, Chronic_GVHD, Cross_syndrome, Acute_Liver, Acute_Lower_gastrointestinal_tract, AGVHDGR, Acute_Skin, Acute_Upper_gastrointestinal_tract, PTSTAT, Chronic_Skin_involvement, Chronic_Sclerotic_changes_of_the_skin, Chronic_Changes_in_oral_cavity, Chronic_Eyes, Chronic_Gastrointestinal_tract, Chronic_Liver, Chronic_Lungs, Chronic_Lungs_functional_assessment, Chronic_Joints_and_fascia, Chronic_Sex_organs, SEVGRADE), ~ as.factor(.x)))
+```
+
+# Приводим переменные с датами к одному виду, который на мой взгляд наиболее удобен
+
+```{r}
+fin_df <-
+  fin_df %>%
+  mutate(BIRTHDTC = format(as.Date(BIRTHDTC, format = "%d/%m/%Y"), "%d.%m.%Y"),
+         PRSTDTC = format(as.Date(PRSTDTC, format = "%d/%m/%Y"), "%d.%m.%Y"),
+         PRENDTC = format(as.Date(PRENDTC, format = "%d/%m/%Y"), "%d.%m.%Y"),
+         TRDTC = format(as.Date(TRDTC, format = "%d/%m/%Y"), "%d.%m.%Y"),
+         LCDTC = format(as.Date(LCDTC, format = "%d/%m/%Y"), "%d.%m.%Y"),
+         DEATHDTC = format(as.Date(DEATHDTC, format = "%d/%m/%Y"), "%d.%m.%Y"),
+         RELAPDTC = format(as.Date(RELAPDTC, format = "%d/%m/%Y"), "%d.%m.%Y"),
+         GVHDDTC = format(as.Date(GVHDDTC, format = "%d/%m/%Y"), "%d.%m.%Y"))
+
+```
+
+# Сохраняем файл
+
+В данном датасете отсутсвуют данные о рефрактерность из RS_20230119_120304 и и о характеристики лечения из CM_20230119_120304, поскольку при приведении к широкому формату слишком сильно увеличивается размер датасета, возможно целесообразнее сделать отдельный датасет с из этих двух и по мере необходимости присоединять к нему данные, работая с ними в длинном формате
+
+```{r}
+write.xlsx(fin_df, "./fin_df.xlsx") # Сохранение файла
+```
+
