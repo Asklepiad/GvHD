@@ -213,14 +213,14 @@ summary(common_df_treatment)
 Не очень понятно, как оценивать, какую линию терапии не смогли оценить/какая не показала резистентности, поскольку для подобных ситуаций не указан номер линии терапии. Оставим только данные о факте резистентности.
 
 ```{r}
-coomon_df_resist <- left_join(common_df_treatment,
+common_df_resist <- left_join(common_df_treatment,
                               fnet$RS_20230119_120304 %>%
                                 filter(REFSTYN == "yes") %>% 
-                                rename(LOT = REFSTLOT),
+                                rename(LOT = REFSTLOT) %>% 
+                                select(!SITE),
                               by = c("SUBJID", "LOT"))
 
 # После этого сделать проверку по дате: резистентность не может наступить раньше факта лечения.
 # Вообще везде сделать проверку по дате
-  
 ```
 
