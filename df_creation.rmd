@@ -81,29 +81,14 @@ fgvhd <- fnet$GVHD_20230119_120304 %>%
   pivot_wider(names_from = GVHDCAT, values_from = GVHDYN) %>% 
   select(!GVHDOTHM) %>%    # Там одни NA
   filter(!is.na(GVHDDTC))
-
-## Объединим с уже имеющимися данными
-
-common_df <- left_join(left_join(left_join(common_df, 
-                       agvhd %>% select(!SITE), 
-                       by="SUBJID"),
-                       cgvhd %>% select(!SITE),
-                       by="SUBJID"),
-                       fgvhd %>% select(!SITE),
-                       by="SUBJID")
 ```
 
-Для нашего текущего датафрейма единица наблюдения -- наличие одного из типов РТПХ у одного пациента.
 
-Посмотрим, что получилось
-```{r}
-str(common_df)
-```
 
-У нас все в формате строк. Не комильфо. Переведем в нужный формат.
+Преобразуем типы переменных
 
 ```{r}
-common_df <- common_df %>% 
+common_df_patient <- common_df %>% 
   mutate(
     SITE = SITE %>% as.factor(),
     BIRTHDTC = format(as.Date(BIRTHDTC, format = "%d/%m/%Y"), "%d.%m.%Y") ,
@@ -129,7 +114,33 @@ common_df <- common_df %>%
     LCDTC = format(as.Date(LCDTC, format = "%d/%m/%Y"), "%d.%m.%Y") ,
     DEATHDTC = format(as.Date(DEATHDTC, format = "%d/%m/%Y"), "%d.%m.%Y") ,
     RELAPYN = RELAPYN %>% as.factor(),
-    RELAPDTC = format(as.Date(RELAPDTC, format = "%d/%m/%Y"), "%d.%m.%Y"),
+    RELAPDTC = format(as.Date(RELAPDTC, format = "%d/%m/%Y"), "%d.%m.%Y")
+  )
+```
+
+Для текущего датафрейма единица наблюдения -- 1 пациент
+
+Добавим информацию про острую, хроническую и оверлап РТПХ
+
+```{r}
+## Объединим с уже имеющимися данными
+
+common_df_disease <- left_join(left_join(left_join(common_df_patient, 
+                       agvhd %>% select(!SITE), 
+                       by="SUBJID"),
+                       cgvhd %>% select(!SITE),
+                       by="SUBJID"),
+                       fgvhd %>% select(!SITE),
+                       by="SUBJID")
+```
+
+
+
+Преобразуем типы переменных.
+
+```{r}
+common_df_disease <- common_df_disease %>% 
+  mutate(
     TRIND = case_when(                     # Эта переменная нужна для последующего объединения с терапией
      `Acute GVHD` == "yes" ~ "acute GVHD",
      `Chronic GVHD` == "yes" ~ "chronic GVHD",
@@ -155,26 +166,61 @@ common_df <- common_df %>%
     `chronic_Joints and fascia` = `chronic_Joints and fascia` %>% as.factor(),
     `chronic_Sex organs` = `chronic_Sex organs` %>% as.factor(),
     GVHDAGE = GVHDAGE %>% as.numeric(),
+    GVHDDTC = format(as.Date(GVHDDTC, format = "%d/%m/%Y"), "%d.%m.%Y") ,
     GVHDMETH = GVHDMETH %>% as.factor(),
     `Acute GVHD` = `Acute GVHD` %>% as.factor(),
     `Chronic GVHD` = `Chronic GVHD` %>% as.factor(),
     `Cross syndrome` = `Cross syndrome` %>% as.factor()
   )
 ```
-Теперь посмотрим, где в данных могут быть проблемы, а где NA
 
-```{r}
-summary(common_df)
-```
+Для нашего текущего датафрейма единица наблюдения -- наличие одного из типов РТПХ у одного пациента.
+
 Добавим информацию о полученной терапии
 
 ```{r}
-common_df <- left_join(common_df,
+common_df_treatment <- left_join(common_df_disease,
           fnet$CM_20230119_120304 %>% select(!SITE),
           by = c("SUBJID", "TRIND"))
   
 ```
 
+
+```{r}
+common_df_treatment <- common_df_treatment %>% 
+  mutate(
+    GVHDTRYN = GVHDTRYN %>% as.factor(),
+    LOT = LOT %>% as.factor(),
+    ATCC = ATCC %>% as.factor(),
+    ATCN = ATCN %>% as.factor(),
+    TRRESP = TRRESP %>% as.factor(),
+    RESPEV = RESPEV %>% as.factor(),
+    TRONG = TRONG %>% as.factor(),
+    TRSTDTC = format(as.Date(TRSTDTC, format = "%d/%m/%Y"), "%d.%m.%Y"),
+    TRENDTC = format(as.Date(TRENDTC, format = "%d/%m/%Y"), "%d.%m.%Y")
+  )
+```
+
+
+```{r}
+summary(common_df_treatment)
+```
+
 Теперь единица наблюдения -- это случай получения одного препарата у одного пациента. Более аггрегированная статистика может быть получена при группировке по нужной переменной (номер пациента, тип РТПХ или оба).
 
+Добавим информацию о факте резистентности.
+
+Не очень понятно, как оценивать, какую линию терапии не смогли оценить/какая не показала резистентности, поскольку для подобных ситуаций не указан номер линии терапии. Оставим только данные о факте резистентности.
+
+```{r}
+coomon_df_resist <- left_join(common_df_treatment,
+                              fnet$RS_20230119_120304 %>%
+                                filter(REFSTYN == "yes") %>% 
+                                rename(LOT = REFSTLOT),
+                              by = c("SUBJID", "LOT"))
+
+# После этого сделать проверку по дате: резистентность не может наступить раньше факта лечения.
+# Вообще везде сделать проверку по дате
+  
+```
 
