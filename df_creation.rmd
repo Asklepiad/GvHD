@@ -139,6 +139,7 @@ common_df_disease <- left_join(left_join(left_join(common_df_patient,
 Преобразуем типы переменных.
 
 ```{r}
+## Добавим префикс acute и chronic к пораженным органам
 common_df_disease <- common_df_disease %>% 
   mutate(
     TRIND = case_when(                     # Эта переменная нужна для последующего объединения с терапией
@@ -171,6 +172,20 @@ common_df_disease <- common_df_disease %>%
     `Acute GVHD` = `Acute GVHD` %>% as.factor(),
     `Chronic GVHD` = `Chronic GVHD` %>% as.factor(),
     `Cross syndrome` = `Cross syndrome` %>% as.factor()
+  ) %>% 
+  rename(
+    Acute_GVHD = `Acute GVHD`,
+    Chronic_GVHD = `Chronic GVHD`,
+    Cross_syndrome = `Cross syndrome`,
+    acute_UGT = `acute_Upper gastrointestinal tract`,
+    acute_LGT = `acute_Lower gastrointestinal tract`,
+    chronic_Skin_perc = `chronic_Skin involvement, % lesion of body surface area`,
+    chronic_Skin_scl = `chronic_Sclerotic changes of the skin`,
+    chronic_oral = `chronic_Changes in oral cavity`,
+    chronic_GT =`chronic_Gastrointestinal tract`,
+    chronic_Lungs_ = `chronic_Lungs functional assessment`,
+    chronic_Joints = `chronic_Joints and fascia`,
+    chronic_Sex = `chronic_Sex organs`
   )
 ```
 
