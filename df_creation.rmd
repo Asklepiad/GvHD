@@ -80,7 +80,7 @@ cgvhd <- fnet$CGVHD_20230119_120304 %>%
 fgvhd <- fnet$GVHD_20230119_120304 %>% 
   pivot_wider(names_from = GVHDCAT, values_from = GVHDYN) %>% 
   select(!GVHDOTHM) %>%    # Там одни NA
-  filter(!is.na(GVHDDTC))
+  filter(!is.na(GVHDDTC) | `Cross syndrome` == "yes")
 ```
 
 
@@ -89,33 +89,12 @@ fgvhd <- fnet$GVHD_20230119_120304 %>%
 
 ```{r}
 common_df_patient <- common_df %>% 
-  mutate(
-    SITE = SITE %>% as.factor(),
-    BIRTHDTC = format(as.Date(BIRTHDTC, format = "%d/%m/%Y"), "%d.%m.%Y") ,
-    SEX = SEX %>% as.factor() ,
-    ICD = ICD %>% as.factor() ,
-    TUTERM = TUTERM %>% as.factor() ,
-    LLTC = LLTC %>% as.factor() ,
-    LLTN = LLTN %>% as.factor() ,
-    PTC = PTC %>% as.factor() ,
-    PTN = PTN %>% as.factor() ,
-    PSOCC = PSOCC %>% as.factor() ,
-    PSOCN = PSOCN %>% as.factor() ,
-    PRSTDTC = format(as.Date(PRSTDTC, format = "%d/%m/%Y"), "%d.%m.%Y") , 
-    TIMGDOSE = TIMGDOSE %>% as.numeric() ,
-    HATGDOSE = HATGDOSE %>% as.numeric() ,
-    PRENDTC =  format(as.Date(PRENDTC, format = "%d/%m/%Y"), "%d.%m.%Y") ,
-    TRNUM = TRNUM %>% as.numeric() ,
-    TRTYPE = TRTYPE %>% as.factor() ,
-    TRDTC =  format(as.Date(TRDTC, format = "%d/%m/%Y"), "%d.%m.%Y") ,
-    TRSOURCE = TRSOURCE %>% as.factor() ,
-    CONDTYPE = CONDTYPE %>% as.factor() ,
-    ALIVE = ALIVE %>% as.factor() ,
-    LCDTC = format(as.Date(LCDTC, format = "%d/%m/%Y"), "%d.%m.%Y") ,
-    DEATHDTC = format(as.Date(DEATHDTC, format = "%d/%m/%Y"), "%d.%m.%Y") ,
-    RELAPYN = RELAPYN %>% as.factor(),
-    RELAPDTC = format(as.Date(RELAPDTC, format = "%d/%m/%Y"), "%d.%m.%Y")
-  )
+  mutate(across(c(SITE,SEX,ICD,TUTERM,LLTC,LLTN,PTC,
+                  PTN,PSOCC,PSOCN,TRTYPE,TRSOURCE,
+                  CONDTYPE,ALIVE,RELAPYN), ~ as.factor(.x))) %>% 
+  mutate(across(c(BIRTHDTC,PRSTDTC,PRENDTC,TRDTC,
+                  LCDTC,DEATHDTC,RELAPDTC), ~format(as.Date(.x, format = "%d/%m/%Y"), "%d.%m.%Y"))) %>% 
+  mutate(across(c(TIMGDOSE, HATGDOSE, TRNUM), ~ as.numeric(.x)))
 ```
 
 Для текущего датафрейма единица наблюдения -- 1 пациент
@@ -125,16 +104,30 @@ common_df_patient <- common_df %>%
 ```{r}
 ## Объединим с уже имеющимися данными
 
-common_df_disease <- left_join(left_join(left_join(common_df_patient, 
-                       agvhd %>% select(!SITE), 
-                       by="SUBJID"),
-                       cgvhd %>% select(!SITE),
-                       by="SUBJID"),
+common_df_disease <-   left_join(common_df_patient,
                        fgvhd %>% select(!SITE),
                        by="SUBJID")
+
+## Разобьем на 3 датасета: острую, хроническую РТПХ и оверлап-синдром
+
+common_df_disease_acute <- left_join(common_df_disease %>% 
+  filter(`Acute GVHD` == "yes"), agvhd %>% select(!SITE), by = "SUBJID")
+
+common_df_disease_chronic <- left_join(common_df_disease %>% 
+  filter(`Chronic GVHD` == "yes"), cgvhd %>% select(!SITE), by = "SUBJID")
+
+common_df_disease_cross <- common_df_disease %>% 
+  filter(`Cross syndrome` == "yes")
+
+common_df_disease %>% colnames()
+
+common_df_disease <- full_join(full_join(common_df_disease_acute, 
+          common_df_disease_chronic, 
+          by = common_df_disease %>% colnames()),
+          common_df_disease_cross,
+          by = common_df_disease %>% colnames())
+
 ```
-
-
 
 Преобразуем типы переменных.
 
@@ -146,34 +139,27 @@ common_df_disease <- common_df_disease %>%
      `Acute GVHD` == "yes" ~ "acute GVHD",
      `Chronic GVHD` == "yes" ~ "chronic GVHD",
      `Cross syndrome` == "yes" ~ "cross syndrome"
-    ) %>% as.factor(),
-    AGVHDOCC = AGVHDOCC %>% as.factor(),
-    AGVHDGR = AGVHDGR %>%  as.factor() ,
-    acute_Skin = acute_Skin %>%  as.factor() ,
-    acute_Liver = acute_Liver %>%  as.factor() ,
-    `acute_Upper gastrointestinal tract` = `acute_Upper gastrointestinal tract` %>%  as.factor() ,
-    `acute_Lower gastrointestinal tract` =  `acute_Lower gastrointestinal tract` %>%  as_factor() ,
-    CGVHDOCC = CGVHDOCC %>%  as.factor() ,
-    PTSTAT = PTSTAT %>%  as.factor() ,
-    SEVTYPE = SEVTYPE %>%  as.factor() ,
-    SEVGRADE = SEVGRADE %>%  as.factor() ,
-    `chronic_Skin involvement, % lesion of body surface area` = `chronic_Skin involvement, % lesion of body surface area` %>%  as.factor() ,
-    `chronic_Sclerotic changes of the skin` = `chronic_Sclerotic changes of the skin` %>%  as.factor() ,
-    `chronic_Changes in oral cavity` = `chronic_Changes in oral cavity` %>%  as.factor(),
-    chronic_Eyes =  chronic_Eyes %>% as.factor(),
-    `chronic_Gastrointestinal tract` = `chronic_Gastrointestinal tract` %>% as.factor(),
-   chronic_Liver = chronic_Liver %>% as.factor(),
-   `chronic_Lungs functional assessment` = `chronic_Lungs functional assessment` %>% as.factor(),
-    `chronic_Joints and fascia` = `chronic_Joints and fascia` %>% as.factor(),
-    `chronic_Sex organs` = `chronic_Sex organs` %>% as.factor(),
-    GVHDAGE = GVHDAGE %>% as.numeric(),
-    GVHDDTC = format(as.Date(GVHDDTC, format = "%d/%m/%Y"), "%d.%m.%Y") ,
-    GVHDMETH = GVHDMETH %>% as.factor(),
-    `Acute GVHD` = `Acute GVHD` %>% as.factor(),
-    `Chronic GVHD` = `Chronic GVHD` %>% as.factor(),
-    `Cross syndrome` = `Cross syndrome` %>% as.factor()
-  ) %>% 
-  rename(
+    ) %>% as.factor()) %>% 
+  mutate(across(c(AGVHDOCC,AGVHDGR,acute_Skin,acute_Liver,`acute_Upper gastrointestinal tract`,
+                  `acute_Lower gastrointestinal tract`,CGVHDOCC,PTSTAT,SEVTYPE,SEVGRADE,
+                  `chronic_Skin involvement, % lesion of body surface area`,
+                  `chronic_Sclerotic changes of the skin`,`chronic_Changes in oral cavity`,
+                  chronic_Eyes,`chronic_Gastrointestinal tract`,chronic_Liver,
+                  `chronic_Lungs functional assessment`,`chronic_Joints and fascia`,
+                  `chronic_Sex organs`,GVHDMETH,`Acute GVHD`,
+                  `Chronic GVHD`,`Cross syndrome`), ~ as.factor(.x))) %>% 
+  mutate(GVHDAGE = GVHDAGE %>% as.numeric(),
+         GVHDDTC = format(as.Date(GVHDDTC, format = "%d/%m/%Y"), "%d.%m.%Y"),
+         COND = case_when(  ## Переместим другую терапию в общий столбец и удалим столбец CONDOTH
+           COND == "other" ~ CONDOTH, 
+           COND != "other" ~  COND
+           ) %>% as.factor(),
+         PRSCHEM = case_when(   ## Переместим другую профилактику в общий столбец и удалим столбец SCHEMOTH
+          PRSCHEM == "other" ~ SCHEMOTH, 
+          PRSCHEM != "other" ~  PRSCHEM 
+         )) %>%
+  )
+  rename(           ## Переименуем ряд переменных
     Acute_GVHD = `Acute GVHD`,
     Chronic_GVHD = `Chronic GVHD`,
     Cross_syndrome = `Cross syndrome`,
@@ -183,13 +169,26 @@ common_df_disease <- common_df_disease %>%
     chronic_Skin_scl = `chronic_Sclerotic changes of the skin`,
     chronic_oral = `chronic_Changes in oral cavity`,
     chronic_GT =`chronic_Gastrointestinal tract`,
-    chronic_Lungs_ = `chronic_Lungs functional assessment`,
+    chronic_Lungs_func = `chronic_Lungs functional assessment`,
     chronic_Joints = `chronic_Joints and fascia`,
     chronic_Sex = `chronic_Sex organs`
-  )
+  ) %>% 
+  select(-c(CONDOTH, Acute_GVHD, Chronic_GVHD, 
+            Cross_syndrome, LLTC, PTC, PSOCC, SCHEMOTH)) 
 ```
 
 Для нашего текущего датафрейма единица наблюдения -- наличие одного из типов РТПХ у одного пациента.
+
+
+
+
+###################################################################################
+                                  Нерабочая часть
+###################################################################################
+
+
+
+
 
 Добавим информацию о полученной терапии
 
@@ -197,7 +196,6 @@ common_df_disease <- common_df_disease %>%
 common_df_treatment <- left_join(common_df_disease,
           fnet$CM_20230119_120304 %>% select(!SITE),
           by = c("SUBJID", "TRIND"))
-  
 ```
 
 
