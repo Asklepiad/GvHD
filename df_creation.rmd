@@ -1,0 +1,275 @@
+---
+title: "df_creation_bs"
+author: "Bogdan Sotnikov"
+date: '2023-11-15'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+lapply(c("glue", "tidyverse", "openxlsx", "readxl"), require, character.only=TRUE)
+```
+
+# Notes:
+1. All whitespaces changed to underscores.
+2. File вид_ТГСК.xlsx переименован в gvhd_type.xlsx
+
+
+# Data reading 
+
+```{r}
+files_dd <- list.files(path = "./raw_data/3_Derivable_Datasets/", pattern = ".xls", all.files = FALSE, full.names = FALSE)
+fdd <- do.call("<-", list(files_dd, sapply(files_dd, 
+                                   function(x) read.xlsx(paste0("./raw_data/3_Derivable_Datasets/", x ), na.strings = NA))))
+
+names(fdd) <- str_split_i(names(fdd), "\\.", 1)
+
+## У файлов из второй папки общая "болезнь" -- пояснительная строка под названием столбцов
+## Я не нашел тривиального решения в коде, поэтому просто убрал эту строку в экселях
+
+files_fet <- list.files(path = "./raw_data/Final_export_tables/", pattern = ".xls", all.files = FALSE, full.names = FALSE)
+fnet <- do.call("<-", list(files_fet, sapply(files_fet, 
+                                   function(x) read.xlsx(paste0("./raw_data/Final_export_tables/", x), na.strings = NA, startRow = 1))))
+
+names(fnet) <- str_split_i(names(fnet), "\\.", 1)
+```
+
+# Dataframe building
+
+Начнем ~~плясать от печки~~ собирать датасет от файла с демографическими данными.
+Затем добавим все сырые файлы, в которых единицей наблюдения является пациент (это датафреймы с данными о показаниях к пересадке, профилактикой, лечением и выживаемостью)
+```{r}
+# Если вы не убирали вторую строку в экселях, раскомментируйте концы строчек кода ниже (и уберите лишнюю запятую)
+common_df <- left_join(left_join(left_join(left_join(fnet$DM_20230119_120304, # %>% slice(-1),
+                       fnet$TU_20230119_120304 %>% select(!SITE), # %>% slice(-1),
+                       by = "SUBJID"),
+                       fnet$PREV_20230119_120304 %>% select(!SITE), # %>% slice(-1),
+                       by = "SUBJID"),
+                       fnet$TR_20230119_120304 %>% select(!SITE), # %>% slice(-1),
+                       by = "SUBJID"),
+                       fnet$STAT_20230119_120304 %>% 
+                       select(!SITE) %>% 
+                       rename(ALIVE = PTSTAT)  , # %>% slice(-1),
+                       by = "SUBJID")
+```
+
+```{r}
+## Добавим датасет по факту наличия той или иной формы РТПХ
+## Предварительно упростим их и переведем в широкий формат
+
+agvhd <- fnet$AGVHD_20230119_120304 %>% 
+  pivot_wider(names_from = AGVHDLOC,
+              values_from = AGVHDST,
+              names_prefix = "acute_") %>%    # Удобно отличать повреждаемый орган + в обоих датасетах есть переменная Liver
+  group_by(SUBJID) %>% 
+  mutate(across(everything(), function(x) max(x, na.rm=TRUE))) %>% 
+  ungroup() %>% 
+  distinct(SUBJID, .keep_all = TRUE) %>% 
+  select(!acute_NA)
+
+cgvhd <- fnet$CGVHD_20230119_120304 %>% 
+  pivot_wider(names_from = CGVHDLOC,
+              values_from = DAMDEG,
+              names_prefix = "chronic_") %>%    # Удобно отличать повреждаемый орган + в обоих датасетах есть переменная Liver
+  group_by(SUBJID) %>% 
+  mutate(across(everything(), function(x) max(x, na.rm=TRUE))) %>% 
+  ungroup() %>% 
+  distinct(SUBJID, .keep_all = TRUE) %>% 
+  select(-c(chronic_NA, TYPEOTH))
+
+fgvhd <- fnet$GVHD_20230119_120304 %>% 
+  pivot_wider(names_from = GVHDCAT, values_from = GVHDYN) %>% 
+  select(!GVHDOTHM) %>%    # Там одни NA
+  filter(!is.na(GVHDDTC) | `Cross syndrome` == "yes")
+```
+
+
+
+Преобразуем типы переменных
+
+```{r}
+common_df_patient <- common_df %>% 
+  mutate(across(c(SITE,SEX,ICD,TUTERM,LLTC,LLTN,PTC,
+                  PTN,PSOCC,PSOCN,TRTYPE,TRSOURCE,
+                  CONDTYPE,ALIVE,RELAPYN), ~ as.factor(.x))) %>% 
+  mutate(across(c(BIRTHDTC,PRSTDTC,PRENDTC,TRDTC,
+                  LCDTC,DEATHDTC,RELAPDTC), ~format(as.Date(.x, format = "%d/%m/%Y"), "%d.%m.%Y"))) %>% 
+  mutate(across(c(TIMGDOSE, HATGDOSE, TRNUM), ~ as.numeric(.x)))
+```
+
+Для текущего датафрейма единица наблюдения -- 1 пациент
+
+Добавим информацию про острую, хроническую и оверлап РТПХ
+
+```{r}
+## Объединим с уже имеющимися данными
+
+common_df_disease <-   left_join(common_df_patient,
+                       fgvhd %>% select(!SITE),
+                       by="SUBJID")
+
+## Разобьем на 3 датасета: острую, хроническую РТПХ и оверлап-синдром
+
+common_df_disease_acute <- left_join(common_df_disease %>% 
+  filter(`Acute GVHD` == "yes"), agvhd %>% select(!SITE), by = "SUBJID")
+
+common_df_disease_chronic <- left_join(common_df_disease %>% 
+  filter(`Chronic GVHD` == "yes"), cgvhd %>% select(!SITE), by = "SUBJID")
+
+common_df_disease_cross <- common_df_disease %>% 
+  filter(`Cross syndrome` == "yes")
+
+common_df_disease %>% colnames()
+
+common_df_disease <- full_join(full_join(common_df_disease_acute, 
+          common_df_disease_chronic, 
+          by = common_df_disease %>% colnames()),
+          common_df_disease_cross,
+          by = common_df_disease %>% colnames())
+
+```
+
+Преобразуем типы переменных.
+
+```{r}
+## Добавим префикс acute и chronic к пораженным органам
+common_df_disease <- common_df_disease %>% 
+  mutate(
+    TRIND = case_when(                     # Эта переменная нужна для последующего объединения с терапией
+     `Acute GVHD` == "yes" ~ "acute GVHD",
+     `Chronic GVHD` == "yes" ~ "chronic GVHD",
+     `Cross syndrome` == "yes" ~ "cross syndrome"
+    ) %>% as.factor()) %>% 
+  mutate(across(c(AGVHDOCC,AGVHDGR,acute_Skin,acute_Liver,`acute_Upper gastrointestinal tract`,
+                  `acute_Lower gastrointestinal tract`,CGVHDOCC,PTSTAT,SEVTYPE,SEVGRADE,
+                  `chronic_Skin involvement, % lesion of body surface area`,
+                  `chronic_Sclerotic changes of the skin`,`chronic_Changes in oral cavity`,
+                  chronic_Eyes,`chronic_Gastrointestinal tract`,chronic_Liver,
+                  `chronic_Lungs functional assessment`,`chronic_Joints and fascia`,
+                  `chronic_Sex organs`,GVHDMETH,`Acute GVHD`,
+                  `Chronic GVHD`,`Cross syndrome`), ~ as.factor(.x))) %>% 
+  mutate(GVHDAGE = GVHDAGE %>% as.numeric(),
+         GVHDDTC = format(as.Date(GVHDDTC, format = "%d/%m/%Y"), "%d.%m.%Y"),
+         COND = case_when(  ## Переместим другую терапию в общий столбец и удалим столбец CONDOTH
+           COND == "other" ~ CONDOTH, 
+           COND != "other" ~  COND
+           ) %>% as.factor(),
+         PRSCHEM = case_when(   ## Переместим другую профилактику в общий столбец и удалим столбец SCHEMOTH
+          PRSCHEM == "other" ~ SCHEMOTH, 
+          PRSCHEM != "other" ~  PRSCHEM 
+         )) %>%
+  rename(           ## Переименуем ряд переменных
+    Acute_GVHD = `Acute GVHD`,
+    Chronic_GVHD = `Chronic GVHD`,
+    Cross_syndrome = `Cross syndrome`,
+    acute_UGT = `acute_Upper gastrointestinal tract`,
+    acute_LGT = `acute_Lower gastrointestinal tract`,
+    chronic_Skin_perc = `chronic_Skin involvement, % lesion of body surface area`,
+    chronic_Skin_scl = `chronic_Sclerotic changes of the skin`,
+    chronic_oral = `chronic_Changes in oral cavity`,
+    chronic_GT =`chronic_Gastrointestinal tract`,
+    chronic_Lungs_func = `chronic_Lungs functional assessment`,
+    chronic_Joints = `chronic_Joints and fascia`,
+    chronic_Sex = `chronic_Sex organs`
+  ) %>% 
+  select(-c(CONDOTH, Acute_GVHD, Chronic_GVHD, 
+            Cross_syndrome, LLTC, PTC, PSOCC, SCHEMOTH)) 
+```
+
+Для нашего текущего датафрейма единица наблюдения -- наличие одного из типов РТПХ у одного пациента.
+
+Вновь разобъем датасет на три субдатасета по заболеваниям
+
+```{r}
+common_df_disease_acute <- common_df_disease %>% 
+  filter(TRIND == "acute GVHD")
+
+common_df_disease_chronic <- common_df_disease %>% 
+  filter(TRIND == "chronic GVHD")
+
+common_df_disease_cross <- common_df_disease %>% 
+  filter(TRIND == "cross syndrome")
+```
+
+
+
+Добавим информацию о полученной терапии
+
+```{r}
+common_df_treatment <- left_join(common_df_disease,
+          fnet$CM_20230119_120304 %>% select(!SITE),
+          by = c("SUBJID", "TRIND")) %>% 
+  select(-c(REPDRUG, DRUGC, ATCC, INGR)) %>%     ### Уберем колонки с дублирующейся и второстепенной информацией
+  mutate(
+    across(c(TRSTDTC, TRENDTC), ~ format(as.Date(.x, format = "%d/%m/%Y"), "%d.%m.%Y")),
+    across(c(GVHDTRYN, DRUGN, ATCN, LOT, TRONG, TRRESP, RESPEV), ~as.factor(.x)),
+    STERRES = if_else(TRRESP %in% c("no response", 
+                                   "progression") & ATCN %in% c("GLUCOCORTICOIDS",
+                                                                "CORTICOSTEROIDS, POTENT (GROUP III)", 
+                                                                "CORTICOSTEROIDS FOR SYSTEMIC USE"),
+                      1, 0)   # Новая колонка с данными о резистентности к стероидам
+  )
+```
+
+Разобьем полученные данные на три блока по типу заболевания (опять)
+
+```{r}
+common_df_treatment_acute <- common_df_treatment %>% 
+  filter(TRIND == "acute GVHD")
+
+common_df_treatment_chronic <- common_df_treatment %>% 
+  filter(TRIND == "chronic GVHD")
+
+common_df_treatment_cross <- common_df_treatment %>% 
+  filter(TRIND == "cross syndrome")
+```
+
+
+###################################################################################
+                                  Нерабочая часть
+###################################################################################
+
+
+
+
+
+
+
+```{r}
+common_df_treatment <- common_df_treatment %>% 
+  mutate(
+    GVHDTRYN = GVHDTRYN %>% as.factor(),
+    LOT = LOT %>% as.factor(),
+    ATCC = ATCC %>% as.factor(),
+    ATCN = ATCN %>% as.factor(),
+    TRRESP = TRRESP %>% as.factor(),
+    RESPEV = RESPEV %>% as.factor(),
+    TRONG = TRONG %>% as.factor(),
+    TRSTDTC = format(as.Date(TRSTDTC, format = "%d/%m/%Y"), "%d.%m.%Y"),
+    TRENDTC = format(as.Date(TRENDTC, format = "%d/%m/%Y"), "%d.%m.%Y")
+  )
+```
+
+
+```{r}
+summary(common_df_treatment)
+```
+
+Теперь единица наблюдения -- это случай получения одного препарата у одного пациента. Более аггрегированная статистика может быть получена при группировке по нужной переменной (номер пациента, тип РТПХ или оба).
+
+Добавим информацию о факте резистентности.
+
+Не очень понятно, как оценивать, какую линию терапии не смогли оценить/какая не показала резистентности, поскольку для подобных ситуаций не указан номер линии терапии. Оставим только данные о факте резистентности.
+
+```{r}
+common_df_resist <- left_join(common_df_treatment,
+                              fnet$RS_20230119_120304 %>%
+                                filter(REFSTYN == "yes") %>% 
+                                rename(LOT = REFSTLOT) %>% 
+                                select(!SITE),
+                              by = c("SUBJID", "LOT"))
+
+# После этого сделать проверку по дате: резистентность не может наступить раньше факта лечения.
+# Вообще везде сделать проверку по дате
+```
+
