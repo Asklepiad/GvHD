@@ -158,7 +158,6 @@ common_df_disease <- common_df_disease %>%
           PRSCHEM == "other" ~ SCHEMOTH, 
           PRSCHEM != "other" ~  PRSCHEM 
          )) %>%
-  )
   rename(           ## Переименуем ряд переменных
     Acute_GVHD = `Acute GVHD`,
     Chronic_GVHD = `Chronic GVHD`,
@@ -179,7 +178,51 @@ common_df_disease <- common_df_disease %>%
 
 Для нашего текущего датафрейма единица наблюдения -- наличие одного из типов РТПХ у одного пациента.
 
+Вновь разобъем датасет на три субдатасета по заболеваниям
 
+```{r}
+common_df_disease_acute <- common_df_disease %>% 
+  filter(TRIND == "acute GVHD")
+
+common_df_disease_chronic <- common_df_disease %>% 
+  filter(TRIND == "chronic GVHD")
+
+common_df_disease_cross <- common_df_disease %>% 
+  filter(TRIND == "cross syndrome")
+```
+
+
+
+Добавим информацию о полученной терапии
+
+```{r}
+common_df_treatment <- left_join(common_df_disease,
+          fnet$CM_20230119_120304 %>% select(!SITE),
+          by = c("SUBJID", "TRIND")) %>% 
+  select(-c(REPDRUG, DRUGC, ATCC, INGR)) %>%     ### Уберем колонки с дублирующейся и второстепенной информацией
+  mutate(
+    across(c(TRSTDTC, TRENDTC), ~ format(as.Date(.x, format = "%d/%m/%Y"), "%d.%m.%Y")),
+    across(c(GVHDTRYN, DRUGN, ATCN, LOT, TRONG, TRRESP, RESPEV), ~as.factor(.x)),
+    STERRES = if_else(TRRESP %in% c("no response", 
+                                   "progression") & ATCN %in% c("GLUCOCORTICOIDS",
+                                                                "CORTICOSTEROIDS, POTENT (GROUP III)", 
+                                                                "CORTICOSTEROIDS FOR SYSTEMIC USE"),
+                      1, 0)   # Новая колонка с данными о резистентности к стероидам
+  )
+```
+
+Разобьем полученные данные на три блока по типу заболевания (опять)
+
+```{r}
+common_df_treatment_acute <- common_df_treatment %>% 
+  filter(TRIND == "acute GVHD")
+
+common_df_treatment_chronic <- common_df_treatment %>% 
+  filter(TRIND == "chronic GVHD")
+
+common_df_treatment_cross <- common_df_treatment %>% 
+  filter(TRIND == "cross syndrome")
+```
 
 
 ###################################################################################
@@ -190,13 +233,6 @@ common_df_disease <- common_df_disease %>%
 
 
 
-Добавим информацию о полученной терапии
-
-```{r}
-common_df_treatment <- left_join(common_df_disease,
-          fnet$CM_20230119_120304 %>% select(!SITE),
-          by = c("SUBJID", "TRIND"))
-```
 
 
 ```{r}
