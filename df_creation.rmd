@@ -7,7 +7,8 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-lapply(c("glue", "tidyverse", "openxlsx", "readxl"), require, character.only=TRUE)
+lapply(c("glue", "tidyverse", "openxlsx", 
+         "readxl", "rstatix", "gtsummary"), require, character.only=TRUE)
 ```
 
 # Notes:
@@ -140,24 +141,34 @@ common_df_disease <- common_df_disease %>%
      `Chronic GVHD` == "yes" ~ "chronic GVHD",
      `Cross syndrome` == "yes" ~ "cross syndrome"
     ) %>% as.factor()) %>% 
-  mutate(across(c(AGVHDOCC,AGVHDGR,acute_Skin,acute_Liver,`acute_Upper gastrointestinal tract`,
-                  `acute_Lower gastrointestinal tract`,CGVHDOCC,PTSTAT,SEVTYPE,SEVGRADE,
-                  `chronic_Skin involvement, % lesion of body surface area`,
-                  `chronic_Sclerotic changes of the skin`,`chronic_Changes in oral cavity`,
-                  chronic_Eyes,`chronic_Gastrointestinal tract`,chronic_Liver,
-                  `chronic_Lungs functional assessment`,`chronic_Joints and fascia`,
-                  `chronic_Sex organs`,GVHDMETH,`Acute GVHD`,
-                  `Chronic GVHD`,`Cross syndrome`), ~ as.factor(.x))) %>% 
-  mutate(GVHDAGE = GVHDAGE %>% as.numeric(),
-         GVHDDTC = format(as.Date(GVHDDTC, format = "%d/%m/%Y"), "%d.%m.%Y"),
-         COND = case_when(  ## Переместим другую терапию в общий столбец и удалим столбец CONDOTH
-           COND == "other" ~ CONDOTH, 
-           COND != "other" ~  COND
-           ) %>% as.factor(),
-         PRSCHEM = case_when(   ## Переместим другую профилактику в общий столбец и удалим столбец SCHEMOTH
-          PRSCHEM == "other" ~ SCHEMOTH, 
-          PRSCHEM != "other" ~  PRSCHEM 
-         )) %>%
+  mutate(
+    across(c(AGVHDOCC,AGVHDGR,acute_Skin,acute_Liver,
+             `acute_Upper gastrointestinal tract`,
+             `acute_Lower gastrointestinal tract`,
+             CGVHDOCC,PTSTAT,SEVTYPE,SEVGRADE,`chronic_Skin involvement, % lesion of body surface area`,
+             `chronic_Sclerotic changes of the skin`,
+             `chronic_Changes in oral cavity`,
+             `chronic_Eyes`,
+             `chronic_Gastrointestinal tract`, chronic_Liver, chronic_Lungs,
+             `chronic_Lungs functional assessment`,
+             `chronic_Joints and fascia`,
+             `chronic_Sex organs`,GVHDMETH,
+             `Acute GVHD`,`Chronic GVHD`,`Cross syndrome`), ~ as.factor(.x)),
+    GVHDAGE = GVHDAGE %>% as.numeric(),
+    GVHDDTC = format(as.Date(GVHDDTC, format = "%d/%m/%Y"), "%d.%m.%Y"),
+    COND = case_when(  ## Переместим другую терапию в общий столбец и удалим столбец CONDOTH
+      COND == "other" ~ CONDOTH, 
+      COND != "other" ~  COND
+     ) %>% as.factor(),
+    PRSCHEM = case_when(   ## Переместим другую профилактику в общий столбец и удалим столбец SCHEMOTH
+    PRSCHEM == "other" ~ SCHEMOTH, 
+    PRSCHEM != "other" ~  PRSCHEM
+    ),
+    across(c(AGVHDOCC,CGVHDOCC), ~ case_when(
+      is.na(.x) ~ "no",
+      .x == "yes" ~ "yes"
+    ))
+) %>% 
   rename(           ## Переименуем ряд переменных
     Acute_GVHD = `Acute GVHD`,
     Chronic_GVHD = `Chronic GVHD`,
@@ -207,7 +218,11 @@ common_df_treatment <- left_join(common_df_disease,
                                    "progression") & ATCN %in% c("GLUCOCORTICOIDS",
                                                                 "CORTICOSTEROIDS, POTENT (GROUP III)", 
                                                                 "CORTICOSTEROIDS FOR SYSTEMIC USE"),
-                      1, 0)   # Новая колонка с данными о резистентности к стероидам
+                      1, 0) %>% as.factor(),   # Новая колонка с данными о резистентности к стероидам
+    across(c(GVHDTRYN,TRONG), ~ case_when(
+      is.na(GVHDTRYN) ~ "no",
+      GVHDTRYN == "yes" ~ "yes"
+    ))
   )
 ```
 
@@ -222,6 +237,37 @@ common_df_treatment_chronic <- common_df_treatment %>%
 
 common_df_treatment_cross <- common_df_treatment %>% 
   filter(TRIND == "cross syndrome")
+```
+
+# Checking correctness of data
+
+```{r}
+str(common_df_treatment)
+```
+
+```{r}
+summary(common_df_treatment)
+```
+
+# EDA
+
+```{r}
+
+```
+
+
+Описательные статистики рефрактерности: отберем пациентов, которые получали терапию кортикостероидами, расчитаем отдельно для группы с развившейся рефрактерностью и для группы без оной описательные статистики.
+
+```{r refracterEDA}
+common_df_treatment %>%
+  filter(GVHDTRYN == "yes",
+         ATCN %in% c("GLUCOCORTICOIDS", 
+                     "CORTICOSTEROIDS FOR SYSTEMIC USE", 
+                     "CORTICOSTEROIDS, POTENT (GROUP III)")) %>% 
+  select(SEX, TUTERM, COND, CONDTYPE, DRUGN, 
+         ALIVE, GVHDAGE, TRIND, RESPEV, STERRES) %>% 
+  tbl_summary(by = STERRES) %>% 
+  add_p()
 ```
 
 
