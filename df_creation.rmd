@@ -220,8 +220,8 @@ common_df_treatment <- left_join(common_df_disease,
                                                                 "CORTICOSTEROIDS FOR SYSTEMIC USE"),
                       1, 0) %>% as.factor(),   # Новая колонка с данными о резистентности к стероидам
     across(c(GVHDTRYN,TRONG), ~ case_when(
-      is.na(GVHDTRYN) ~ "no",
-      GVHDTRYN == "yes" ~ "yes"
+      is.na(.x) ~ "no",
+      .x == "yes" ~ "yes"
     ))
   )
 ```
