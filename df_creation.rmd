@@ -8,7 +8,8 @@ output: html_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 lapply(c("glue", "tidyverse", "openxlsx", 
-         "readxl", "rstatix", "gtsummary"), require, character.only=TRUE)
+         "readxl", "rstatix", "gtsummary",
+         "Hmisc", "ggcorrplot", "psych"), require, character.only=TRUE)
 ```
 
 # Notes:
@@ -96,6 +97,14 @@ common_df_patient <- common_df %>%
   mutate(across(c(BIRTHDTC,PRSTDTC,PRENDTC,TRDTC,
                   LCDTC,DEATHDTC,RELAPDTC), ~format(as.Date(.x, format = "%d/%m/%Y"), "%d.%m.%Y"))) %>% 
   mutate(across(c(TIMGDOSE, HATGDOSE, TRNUM), ~ as.numeric(.x)))
+```
+
+
+
+Меняем ошибочную дату
+```{r}
+common_df_patient <- common_df_patient %>% 
+  mutate(PRSTDTC = if_else(SUBJID == "01095", "08.07.2021", PRSTDTC))
 ```
 
 Для текущего датафрейма единица наблюдения -- 1 пациент
@@ -220,8 +229,8 @@ common_df_treatment <- left_join(common_df_disease,
                                                                 "CORTICOSTEROIDS FOR SYSTEMIC USE"),
                       1, 0) %>% as.factor(),   # Новая колонка с данными о резистентности к стероидам
     across(c(GVHDTRYN,TRONG), ~ case_when(
-      is.na(GVHDTRYN) ~ "no",
-      GVHDTRYN == "yes" ~ "yes"
+      is.na(.x) ~ "no",
+      .x == "yes" ~ "yes"
     ))
   )
 ```
@@ -239,6 +248,7 @@ common_df_treatment_cross <- common_df_treatment %>%
   filter(TRIND == "cross syndrome")
 ```
 
+
 # Checking correctness of data
 
 ```{r}
@@ -251,8 +261,204 @@ summary(common_df_treatment)
 
 # EDA
 
+Добавим новые переменные: длительность профилактики, длительность лечения, интервал от пересадки КМ до установления диагноза РТПХ, интервал от пересадки КМ до начала профилактики, интервал от конца профилактики до начала лечения.
+```{r}
+#View(common_df_treatment_chronic)
+common_df_treatment_chronic <- common_df_treatment_chronic %>% 
+  mutate(
+    TDINTER = (as.Date(GVHDDTC,        ## От пересадки до РТПХ
+                format = "%d.%m.%Y") - as.Date(TRDTC, 
+                                               format = "%d.%m.%Y")) %>% as.character %>% as.numeric,
+    TPINTER = (as.Date(PRSTDTC,        ## От пересадки до профилактики
+                format = "%d.%m.%Y") - as.Date(TRDTC, 
+                                               format = "%d.%m.%Y")) %>% as.character %>% as.numeric,
+    PTINTER = (as.Date(PRENDTC,        ## От конца профилатики до начала лечения
+                format = "%d.%m.%Y") - as.Date(TRSTDTC, 
+                                               format = "%d.%m.%Y")) %>% as.character %>% as.numeric,
+    
+    PRINTER = (as.Date(PRENDTC,        ## Профилактика
+                format = "%d.%m.%Y") - as.Date(PRSTDTC, 
+                                               format = "%d.%m.%Y")) %>% as.character %>% as.numeric,
+    TRINTER = if_else(is.na(TRENDTC), (as.Date(LCDTC,        ## Лечение
+                format = "%d.%m.%Y") - as.Date(TRSTDTC, 
+                                               format = "%d.%m.%Y")) %>% as.character %>% as.numeric, (as.Date(TRENDTC, 
+                format = "%d.%m.%Y") - as.Date(TRSTDTC, 
+                                               format = "%d.%m.%Y")) %>% as.character %>% as.numeric)
+  )
+
+common_df_treatment_chronic <- common_df_treatment_chronic %>% 
+  filter(TPINTER>=3 & TPINTER < 5)   # Удаляем людей, у которых профилактика началась ранее чем на 3-й день после трансплантации, и позднее, чем на 5-й.
+```
+
 ```{r}
 
+```
+
+Подсчитаем описательные статистики
+
+Нам интересно посмотреть на следующие переменные
+Факторные: SEX (пол), TUTERM (диагноз), PSOCN (группа заболеваний) TIMGDOSE? (есть-нет), HATGDOSE (есть-нет),
+TRTYPE (тип донора), TRSOURCE (источник КМ), ALIVE (выжил ли пациент), RELAPYN (был ли рецидив), PTSTAT (состояние пациента при обследовании), SEVGRADE? (степень тяжести), все, что начинается с chronic? (проявления заболевания), STERRES (развилась ли резистентность к стероидам)
+Числовые: TRNUM (число пересадок), GVHDAGE (возраст начала заболевания), все, что заканчивается на INTER (временные интервалы)
+
+```{r}
+catStat_group <- function(df, factorr, grouperr){
+  df %>% 
+    select({{ grouperr }}, variant = {{  factorr }}) %>% 
+    mutate(variant = as.character(variant) %>%  replace_na("no_data") %>% as.factor()) %>% 
+    count({{ grouperr }}, variant) %>% 
+    rename(number = n) %>% 
+    group_by({{ grouperr }}) %>% 
+    mutate(proportionIntoGroup = round(number/sum(number),3),
+           proportionCI = paste(
+             round(binconf(number, sum(number), method = "wilson")[,2], 3),
+             round(binconf(number, sum(number), method = "wilson")[,3], 3),
+             sep="-"),
+           variable = factorr) %>% 
+  relocate(variable, .after=1)
+}
+
+factor_table_group <- lapply(common_df_treatment_chronic %>% 
+         select(where(is.factor) & !STERRES) %>% 
+         colnames, 
+       function(x) catStat_group(common_df_treatment_chronic, x, STERRES)) %>% 
+       do.call(rbind, .) %>% 
+  arrange(STERRES)
+
+catStat <- function(df, factorr){
+  df %>% 
+    select(variant = {{  factorr }}) %>% 
+    mutate(variant = as.character(variant) %>%  replace_na("no_data") %>% as.factor()) %>% 
+    count(variant) %>% 
+    rename(number = n) %>% 
+    mutate(proportionIntoGroup = round(number/sum(number),3),
+           proportionCI = paste(
+             round(binconf(number, sum(number), method = "wilson")[,2], 3),
+             round(binconf(number, sum(number), method = "wilson")[,3], 3),
+             sep="-"),
+           variable = factorr) %>% 
+  relocate(variable, .after=1)
+}
+
+factor_table <- lapply(common_df_treatment_chronic %>% 
+         select(where(is.factor)) %>% 
+         colnames, 
+       function(x) catStat(common_df_treatment_chronic, x) %>% 
+       do.call(rbind, .))
+
+
+do.call(rbind, factor_table)
+factor_table[[3]]
+
+ft1 <- common_df_treatment_chronic %>% 
+    select(variant = "SEX") %>% 
+    mutate(variant = as.character(variant) %>%  replace_na("no_data") %>% as.factor()) %>% 
+    count(variant) %>% 
+    rename(number = n) %>% 
+    mutate(proportionIntoGroup = round(number/sum(number),3),
+           proportionCI = paste(
+             round(binconf(number, sum(number), method = "wilson")[,2], 3),
+             round(binconf(number, sum(number), method = "wilson")[,3], 3),
+             sep="-"),
+           variable = "SEX") %>% 
+  relocate(variable, .after=1)
+
+ft2 <- common_df_treatment_chronic %>% 
+    select(variant = "TUTERM") %>% 
+    mutate(variant = as.character(variant) %>%  replace_na("no_data") %>% as.factor()) %>% 
+    count(variant) %>% 
+    rename(number = n) %>% 
+    mutate(proportionIntoGroup = round(number/sum(number),3),
+           proportionCI = paste(
+             round(binconf(number, sum(number), method = "wilson")[,2], 3),
+             round(binconf(number, sum(number), method = "wilson")[,3], 3),
+             sep="-"),
+           variable = "TUTERM") %>% 
+  relocate(variable, .after=1)
+
+lapply(c(ft1, ft2), function(y) do.call(rbind, y))
+
+```
+
+
+```{r descriptive}
+se <- function(x){
+  sd(x, na.rm=TRUE)/sqrt(length(x))
+}
+
+statistics <- list(
+  Counts = ~ length(.x) %>% as.character(),
+  NAs = ~ sum(is.na(.x)) %>% as.character(),
+  Mean = ~ mean(.x, na.rm=TRUE) %>% round(3) %>% as.character(),
+  SD = ~ sd(.x, na.rm=TRUE) %>% round(3) %>% as.character(),
+  CI95 = ~ paste(round(mean(.x, na.rm=TRUE) - 1.96 * se(.x), 3),
+                    round(mean(.x, na.rm=TRUE) + 1.96 * se(.x), 3), sep="_"),
+  Median = ~ median(.x, na.rm=TRUE) %>% round(3) %>% as.character(),
+  Quantiles = ~ paste(round(quantile(.x, probs=c(0.25), na.rm=TRUE), 3), 
+                        round(quantile(.x, probs=c(0.75), na.rm=TRUE), 3), sep="_"),
+  Iqr = ~ IQR(.x, na.rm=TRUE) %>% round(3) %>% as.character(),
+  Min = ~ min(.x, na.rm=TRUE) %>% round(3) %>% as.character(),
+  Max = ~ max(.x, na.rm=TRUE) %>% round(3) %>% as.character(),
+  )
+  
+catStat <- function(df, factorr, grouperr){
+  df %>% 
+    select({{ grouperr }}, variant = {{  factorr }}) %>% 
+    mutate(variant = as.character(variant) %>%  replace_na("no_data") %>% as.factor()) %>% 
+    count({{ grouperr }}, variant) %>% 
+    rename(number = n) %>% 
+    group_by({{ grouperr }}) %>% 
+    mutate(proportionIntoGroup = round(number/sum(number),3),
+           proportionCI = paste(
+             round(binconf(number, sum(number), method = "wilson")[,2], 3),
+             round(binconf(number, sum(number), method = "wilson")[,3], 3),
+             sep="-"),
+           variable = factorr) %>% 
+  relocate(variable, .after=1)
+}
+
+common_df_treatment_chronic %>% 
+  summarise(across(is.numeric, statistics)) %>% 
+  pivot_longer() %>% 
+  separate(name, sep="_", into=c("variable", "statistic"))
+```
+
+Боксплоты для продолжительности временных интервалов
+```{r}
+#нбд Нормально оформить подписи и названия графиков
+boxpCreator_inter <- function(df, y){
+  ggplot(df)+
+    geom_boxplot(aes(y=pull(df[y])), 
+                 fill = "green",
+                 color="black")+
+    labs(y = "Количество дней")+
+    theme_bw()+
+    theme(axis.text.y = element_text(size=16),
+        axis.title.x = element_text(size=19),
+        axis.title.y = element_text(size=19),
+        plot.title = element_text(size=20, hjust=0.5),
+        legend.title = element_text(size=21),
+        legend.text = element_text(size=18))
+}
+
+lapply(common_df_treatment_chronic %>% 
+         select(ends_with("INTER")) %>% 
+         colnames, function(y) boxpCreator_inter(common_df_treatment_chronic, y))
+```
+
+
+
+======================================================================
+Рабочее, но неоформленное
+
+
+Развлечения с сompareGroups
+
+```{r}
+library(compareGroups)
+compareGroups(TDINTER ~ ., 
+              data = common_df_treatment_chronic,
+              method = c(triglyc = 2))
 ```
 
 
@@ -264,7 +470,7 @@ common_df_treatment %>%
          ATCN %in% c("GLUCOCORTICOIDS", 
                      "CORTICOSTEROIDS FOR SYSTEMIC USE", 
                      "CORTICOSTEROIDS, POTENT (GROUP III)")) %>% 
-  select(SEX, TUTERM, COND, CONDTYPE, DRUGN, 
+  select(SEX, TUTERM, COND, CONDTYPE, DRUGN, chronic_Joints,
          ALIVE, GVHDAGE, TRIND, RESPEV, STERRES) %>% 
   tbl_summary(by = STERRES) %>% 
   add_p()
