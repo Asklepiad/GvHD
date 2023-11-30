@@ -290,10 +290,6 @@ common_df_treatment_chronic <- common_df_treatment_chronic %>%
   filter(TPINTER>=3 & TPINTER < 5)   # Удаляем людей, у которых профилактика началась ранее чем на 3-й день после трансплантации, и позднее, чем на 5-й.
 ```
 
-```{r}
-
-```
-
 Подсчитаем описательные статистики
 
 Нам интересно посмотреть на следующие переменные
@@ -301,30 +297,10 @@ common_df_treatment_chronic <- common_df_treatment_chronic %>%
 TRTYPE (тип донора), TRSOURCE (источник КМ), ALIVE (выжил ли пациент), RELAPYN (был ли рецидив), PTSTAT (состояние пациента при обследовании), SEVGRADE? (степень тяжести), все, что начинается с chronic? (проявления заболевания), STERRES (развилась ли резистентность к стероидам)
 Числовые: TRNUM (число пересадок), GVHDAGE (возраст начала заболевания), все, что заканчивается на INTER (временные интервалы)
 
-```{r}
-catStat_group <- function(df, factorr, grouperr){
-  df %>% 
-    select({{ grouperr }}, variant = {{  factorr }}) %>% 
-    mutate(variant = as.character(variant) %>%  replace_na("no_data") %>% as.factor()) %>% 
-    count({{ grouperr }}, variant) %>% 
-    rename(number = n) %>% 
-    group_by({{ grouperr }}) %>% 
-    mutate(proportionIntoGroup = round(number/sum(number),3),
-           proportionCI = paste(
-             round(binconf(number, sum(number), method = "wilson")[,2], 3),
-             round(binconf(number, sum(number), method = "wilson")[,3], 3),
-             sep="-"),
-           variable = factorr) %>% 
-  relocate(variable, .after=1)
-}
-
-factor_table_group <- lapply(common_df_treatment_chronic %>% 
-         select(where(is.factor) & !STERRES) %>% 
-         colnames, 
-       function(x) catStat_group(common_df_treatment_chronic, x, STERRES)) %>% 
-       do.call(rbind, .) %>% 
-  arrange(STERRES)
-
+```{r descriptive_factor}
+# Функция подсчитывает число единиц наблюдения для градации фактора,
+# долю наблюдений с данной градацией от всех наблюдений,
+# доверительный интервал (по Уилсону) для этой доли
 catStat <- function(df, factorr){
   df %>% 
     select(variant = {{  factorr }}) %>% 
@@ -344,44 +320,17 @@ factor_table <- lapply(common_df_treatment_chronic %>%
          select(where(is.factor)) %>% 
          colnames, 
        function(x) catStat(common_df_treatment_chronic, x) %>% 
-       do.call(rbind, .))
-
-
-do.call(rbind, factor_table)
-factor_table[[3]]
-
-ft1 <- common_df_treatment_chronic %>% 
-    select(variant = "SEX") %>% 
-    mutate(variant = as.character(variant) %>%  replace_na("no_data") %>% as.factor()) %>% 
-    count(variant) %>% 
-    rename(number = n) %>% 
-    mutate(proportionIntoGroup = round(number/sum(number),3),
-           proportionCI = paste(
-             round(binconf(number, sum(number), method = "wilson")[,2], 3),
-             round(binconf(number, sum(number), method = "wilson")[,3], 3),
-             sep="-"),
-           variable = "SEX") %>% 
-  relocate(variable, .after=1)
-
-ft2 <- common_df_treatment_chronic %>% 
-    select(variant = "TUTERM") %>% 
-    mutate(variant = as.character(variant) %>%  replace_na("no_data") %>% as.factor()) %>% 
-    count(variant) %>% 
-    rename(number = n) %>% 
-    mutate(proportionIntoGroup = round(number/sum(number),3),
-           proportionCI = paste(
-             round(binconf(number, sum(number), method = "wilson")[,2], 3),
-             round(binconf(number, sum(number), method = "wilson")[,3], 3),
-             sep="-"),
-           variable = "TUTERM") %>% 
-  relocate(variable, .after=1)
-
-lapply(c(ft1, ft2), function(y) do.call(rbind, y))
-
+        as.data.frame) %>% 
+  do.call(rbind, .) %>% 
+  select(variable, variant, number, proportionIntoGroup, proportionCI) %>% 
+  rename(group_proportion = proportionIntoGroup,
+         proportion_CI = proportionCI)
 ```
 
 
-```{r descriptive}
+```{r descriptive_numeric}
+### Вычисляем описательные статистики для нумерических переменных
+
 se <- function(x){
   sd(x, na.rm=TRUE)/sqrt(length(x))
 }
@@ -392,35 +341,24 @@ statistics <- list(
   Mean = ~ mean(.x, na.rm=TRUE) %>% round(3) %>% as.character(),
   SD = ~ sd(.x, na.rm=TRUE) %>% round(3) %>% as.character(),
   CI95 = ~ paste(round(mean(.x, na.rm=TRUE) - 1.96 * se(.x), 3),
-                    round(mean(.x, na.rm=TRUE) + 1.96 * se(.x), 3), sep="_"),
+                    round(mean(.x, na.rm=TRUE) + 1.96 * se(.x), 3), sep="-"),
   Median = ~ median(.x, na.rm=TRUE) %>% round(3) %>% as.character(),
   Quantiles = ~ paste(round(quantile(.x, probs=c(0.25), na.rm=TRUE), 3), 
-                        round(quantile(.x, probs=c(0.75), na.rm=TRUE), 3), sep="_"),
+                        round(quantile(.x, probs=c(0.75), na.rm=TRUE), 3), sep="-"),
   Iqr = ~ IQR(.x, na.rm=TRUE) %>% round(3) %>% as.character(),
   Min = ~ min(.x, na.rm=TRUE) %>% round(3) %>% as.character(),
-  Max = ~ max(.x, na.rm=TRUE) %>% round(3) %>% as.character(),
+  Max = ~ max(.x, na.rm=TRUE) %>% round(3) %>% as.character()
   )
   
-catStat <- function(df, factorr, grouperr){
-  df %>% 
-    select({{ grouperr }}, variant = {{  factorr }}) %>% 
-    mutate(variant = as.character(variant) %>%  replace_na("no_data") %>% as.factor()) %>% 
-    count({{ grouperr }}, variant) %>% 
-    rename(number = n) %>% 
-    group_by({{ grouperr }}) %>% 
-    mutate(proportionIntoGroup = round(number/sum(number),3),
-           proportionCI = paste(
-             round(binconf(number, sum(number), method = "wilson")[,2], 3),
-             round(binconf(number, sum(number), method = "wilson")[,3], 3),
-             sep="-"),
-           variable = factorr) %>% 
-  relocate(variable, .after=1)
-}
-
-common_df_treatment_chronic %>% 
-  summarise(across(is.numeric, statistics)) %>% 
-  pivot_longer() %>% 
-  separate(name, sep="_", into=c("variable", "statistic"))
+numeric_table <- common_df_treatment_chronic %>% 
+  summarise(across(is.numeric, statistics)) %>%
+  stack %>% 
+  rename(value = values) %>% 
+  separate(ind, sep = "_", into = c("variable", "statistic")) %>% 
+  pivot_wider(
+    names_from = variable,
+    values_from = value
+  )
 ```
 
 Боксплоты для продолжительности временных интервалов
