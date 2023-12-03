@@ -235,36 +235,11 @@ common_df_treatment <- left_join(common_df_disease,
   )
 ```
 
-Разобьем полученные данные на три блока по типу заболевания (опять)
-
-```{r}
-common_df_treatment_acute <- common_df_treatment %>% 
-  filter(TRIND == "acute GVHD")
-
-common_df_treatment_chronic <- common_df_treatment %>% 
-  filter(TRIND == "chronic GVHD")
-
-common_df_treatment_cross <- common_df_treatment %>% 
-  filter(TRIND == "cross syndrome")
-```
-
-
-# Checking correctness of data
-
-```{r}
-str(common_df_treatment)
-```
-
-```{r}
-summary(common_df_treatment)
-```
-
-# EDA
-
 Добавим новые переменные: длительность профилактики, длительность лечения, интервал от пересадки КМ до установления диагноза РТПХ, интервал от пересадки КМ до начала профилактики, интервал от конца профилактики до начала лечения.
+
 ```{r}
 #View(common_df_treatment_chronic)
-common_df_treatment_chronic <- common_df_treatment_chronic %>% 
+common_df_treatment <- common_df_treatment %>% 
   mutate(
     TDINTER = (as.Date(GVHDDTC,        ## От пересадки до РТПХ
                 format = "%d.%m.%Y") - as.Date(TRDTC, 
@@ -286,9 +261,68 @@ common_df_treatment_chronic <- common_df_treatment_chronic %>%
                                                format = "%d.%m.%Y")) %>% as.character %>% as.numeric)
   )
 
-common_df_treatment_chronic <- common_df_treatment_chronic %>% 
-  filter(TPINTER>=3 & TPINTER < 5)   # Удаляем людей, у которых профилактика началась ранее чем на 3-й день после трансплантации, и позднее, чем на 5-й.
+# common_df_treatment_chronic <- common_df_treatment_chronic %>% 
+#   filter(TPINTER>=3 & TPINTER < 5)   # Удаляем людей, у которых профилактика началась ранее чем на 3-й день после трансплантации, и позднее, чем на 5-й.
 ```
+
+```{r}
+### Пробная штука
+
+test_drive <- common_df_treatment %>% 
+  group_by(SUBJID, TRIND) %>% 
+  mutate(LOT = max(is.numeric(LOT)),
+         GLUK = if_else(ATCN %in% c("GLUCOCORTICOIDS", "CORTICOSTEROIDS, DERMATOLOGICAL PREPARATIONS",
+                                    "CORTICOSTEROIDS FOR SYSTEMIC USE", "CORTICOSTEROIDS, POTENT (GROUP III)"), 1, 0),
+         JAK = if_else(ATCN %in% c("JANUS-ASSOCIATED KINASE (JAK) INHIBITORS"),1,0),
+         CALIN = if_else(ATCN %in% c("CALCINEURIN INHIBITORS"),1,0),
+         OTHER = if_else(ATCN %in% c("OTHER IMMUNOSUPPRESSANTS",
+                                     "SELECTIVE IMMUNOSUPPRESSANTS",
+                                     "INTERLEUKINS",
+                                     "BCR-ABL TYROSINE KINASE INHIBITORS",
+                                     "INTERLEUKIN INHIBITORS",
+                                     "OTHER IMMUNOSTIMULANTS",
+                                     "TUMOR NECROSIS FACTOR ALPHA (TNF-) INHIBITORS",
+                                     "IMIDAZOLE DERIVATIVES",
+                                     "BRUTON'S TYROSINE KINASE (BTK) INHIBITORS",
+                                     NA),1,0)) %>% 
+  select(ATCN, GLUK, JAK, CALIN, OTHER)
+```
+
+
+Разобьем полученные данные на три блока по типу заболевания (опять)
+
+```{r}
+common_df_treatment_acute <- common_df_treatment %>% 
+  filter(TRIND == "acute GVHD")
+
+common_df_treatment_chronic <- common_df_treatment %>% 
+  filter(TRIND == "chronic GVHD")
+
+common_df_treatment_cross <- common_df_treatment %>% 
+  filter(TRIND == "cross syndrome")
+```
+
+## Adiitional transformations
+
+
+
+
+
+
+# Checking correctness of data
+
+```{r}
+str(common_df_treatment)
+```
+
+```{r}
+summary(common_df_treatment)
+```
+
+
+# EDA
+
+
 
 Подсчитаем описательные статистики
 
@@ -316,25 +350,12 @@ catStat <- function(df, factorr){
   relocate(variable, .after=1)
 }
 
-factor_table <- lapply(common_df_treatment_chronic %>% 
-         select(where(is.factor)) %>% 
-         colnames, 
-       function(x) catStat(common_df_treatment_chronic, x) %>% 
-        as.data.frame) %>% 
-  do.call(rbind, .) %>% 
-  select(variable, variant, number, proportionIntoGroup, proportionCI) %>% 
-  rename(group_proportion = proportionIntoGroup,
-         proportion_CI = proportionCI)
-```
-
-
-```{r descriptive_numeric}
-### Вычисляем описательные статистики для нумерических переменных
-
+### Функция стандартной ошибки
 se <- function(x){
   sd(x, na.rm=TRUE)/sqrt(length(x))
 }
 
+### Вычисляем описательные статистики для нумерических переменных
 statistics <- list(
   Counts = ~ length(.x) %>% as.character(),
   NAs = ~ sum(is.na(.x)) %>% as.character(),
@@ -349,8 +370,26 @@ statistics <- list(
   Min = ~ min(.x, na.rm=TRUE) %>% round(3) %>% as.character(),
   Max = ~ max(.x, na.rm=TRUE) %>% round(3) %>% as.character()
   )
+
+
+```
+
+По-хорошему весь нижележащий код надо обернуть в функции
+
+```{r descriptive_patient}
+factor_patient_table <- lapply(common_df_patient %>% 
+         select(where(is.factor)) %>% 
+         colnames, 
+       function(x) catStat(common_df_patient, x) %>% 
+        as.data.frame) %>% 
+  do.call(rbind, .) %>% 
+  select(variable, variant, number, proportionIntoGroup, proportionCI) %>% 
+  rename(group_proportion = proportionIntoGroup,
+         proportion_CI = proportionCI)
+
+
   
-numeric_table <- common_df_treatment_chronic %>% 
+numeric_patient_table <- common_df_patient %>% 
   summarise(across(is.numeric, statistics)) %>%
   stack %>% 
   rename(value = values) %>% 
@@ -360,6 +399,132 @@ numeric_table <- common_df_treatment_chronic %>%
     values_from = value
   )
 ```
+
+```{r descriptive_disease}
+factor_disease_acute_table <- lapply(common_df_disease %>% filter(TRIND == "acute GVHD") %>% 
+         select(where(is.factor)) %>% 
+         colnames, 
+       function(x) catStat(common_df_disease %>% filter(TRIND == "acute GVHD"), x) %>% 
+        as.data.frame) %>% 
+  do.call(rbind, .) %>% 
+  select(variable, variant, number, proportionIntoGroup, proportionCI) %>% 
+  rename(group_proportion = proportionIntoGroup,
+         proportion_CI = proportionCI)
+
+numeric_disease_acute_table <- common_df_disease %>% filter(TRIND == "acute GVHD") %>%
+  summarise(across(is.numeric, statistics)) %>%
+  stack %>% 
+  rename(value = values) %>% 
+  separate(ind, sep = "_", into = c("variable", "statistic")) %>% 
+  pivot_wider(
+    names_from = variable,
+    values_from = value
+  )
+
+factor_disease_chronic_table <- lapply(common_df_disease %>% filter(TRIND == "chronic GVHD") %>% 
+         select(where(is.factor)) %>% 
+         colnames, 
+       function(x) catStat(common_df_disease %>% filter(TRIND == "chronic GVHD"), x) %>% 
+        as.data.frame) %>% 
+  do.call(rbind, .) %>% 
+  select(variable, variant, number, proportionIntoGroup, proportionCI) %>% 
+  rename(group_proportion = proportionIntoGroup,
+         proportion_CI = proportionCI)
+
+numeric_disease_chronic_table <- common_df_disease %>% filter(TRIND == "chronic GVHD") %>%
+  summarise(across(is.numeric, statistics)) %>%
+  stack %>% 
+  rename(value = values) %>% 
+  separate(ind, sep = "_", into = c("variable", "statistic")) %>% 
+  pivot_wider(
+    names_from = variable,
+    values_from = value
+  )
+
+factor_disease_cross_table <- lapply(common_df_disease %>% filter(TRIND == "cross syndrome") %>% 
+         select(where(is.factor)) %>% 
+         colnames, 
+       function(x) catStat(common_df_disease %>% filter(TRIND == "cross syndrome"), x) %>% 
+        as.data.frame) %>% 
+  do.call(rbind, .) %>% 
+  select(variable, variant, number, proportionIntoGroup, proportionCI) %>% 
+  rename(group_proportion = proportionIntoGroup,
+         proportion_CI = proportionCI)
+
+numeric_disease_cross_table <- common_df_disease %>% filter(TRIND == "cross syndrome") %>%
+  summarise(across(is.numeric, statistics)) %>%
+  stack %>% 
+  rename(value = values) %>% 
+  separate(ind, sep = "_", into = c("variable", "statistic")) %>% 
+  pivot_wider(
+    names_from = variable,
+    values_from = value
+)
+```
+
+```{r descriptive_treatment}
+factor_disease_acute_table <- lapply(common_df_disease %>% filter(TRIND == "acute GVHD") %>% 
+         select(where(is.factor)) %>% 
+         colnames, 
+       function(x) catStat(common_df_disease %>% filter(TRIND == "acute GVHD"), x) %>% 
+        as.data.frame) %>% 
+  do.call(rbind, .) %>% 
+  select(variable, variant, number, proportionIntoGroup, proportionCI) %>% 
+  rename(group_proportion = proportionIntoGroup,
+         proportion_CI = proportionCI)
+
+numeric_disease_acute_table <- common_df_disease %>% filter(TRIND == "acute GVHD") %>%
+  summarise(across(is.numeric, statistics)) %>%
+  stack %>% 
+  rename(value = values) %>% 
+  separate(ind, sep = "_", into = c("variable", "statistic")) %>% 
+  pivot_wider(
+    names_from = variable,
+    values_from = value
+  )
+
+factor_disease_chronic_table <- lapply(common_df_disease %>% filter(TRIND == "chronic GVHD") %>% 
+         select(where(is.factor)) %>% 
+         colnames, 
+       function(x) catStat(common_df_disease %>% filter(TRIND == "chronic GVHD"), x) %>% 
+        as.data.frame) %>% 
+  do.call(rbind, .) %>% 
+  select(variable, variant, number, proportionIntoGroup, proportionCI) %>% 
+  rename(group_proportion = proportionIntoGroup,
+         proportion_CI = proportionCI)
+
+numeric_disease_chronic_table <- common_df_disease %>% filter(TRIND == "chronic GVHD") %>%
+  summarise(across(is.numeric, statistics)) %>%
+  stack %>% 
+  rename(value = values) %>% 
+  separate(ind, sep = "_", into = c("variable", "statistic")) %>% 
+  pivot_wider(
+    names_from = variable,
+    values_from = value
+  )
+
+factor_disease_cross_table <- lapply(common_df_disease %>% filter(TRIND == "cross syndrome") %>% 
+         select(where(is.factor)) %>% 
+         colnames, 
+       function(x) catStat(common_df_disease %>% filter(TRIND == "cross syndrome"), x) %>% 
+        as.data.frame) %>% 
+  do.call(rbind, .) %>% 
+  select(variable, variant, number, proportionIntoGroup, proportionCI) %>% 
+  rename(group_proportion = proportionIntoGroup,
+         proportion_CI = proportionCI)
+
+numeric_disease_cross_table <- common_df_disease %>% filter(TRIND == "cross syndrome") %>%
+  summarise(across(is.numeric, statistics)) %>%
+  stack %>% 
+  rename(value = values) %>% 
+  separate(ind, sep = "_", into = c("variable", "statistic")) %>% 
+  pivot_wider(
+    names_from = variable,
+    values_from = value
+)
+```
+
+
 
 Боксплоты для продолжительности временных интервалов
 ```{r}
