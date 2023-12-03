@@ -96,7 +96,8 @@ common_df_patient <- common_df %>%
                   CONDTYPE,ALIVE,RELAPYN), ~ as.factor(.x))) %>% 
   mutate(across(c(BIRTHDTC,PRSTDTC,PRENDTC,TRDTC,
                   LCDTC,DEATHDTC,RELAPDTC), ~format(as.Date(.x, format = "%d/%m/%Y"), "%d.%m.%Y"))) %>% 
-  mutate(across(c(TIMGDOSE, HATGDOSE, TRNUM), ~ as.numeric(.x)))
+  mutate(across(c(TIMGDOSE, HATGDOSE, TRNUM), ~ as.numeric(.x))) %>% 
+  select(-c(LLTC, PTC, PSOCC, ICD, TUTERM, LLTN))
 ```
 
 
@@ -128,8 +129,6 @@ common_df_disease_chronic <- left_join(common_df_disease %>%
 
 common_df_disease_cross <- common_df_disease %>% 
   filter(`Cross syndrome` == "yes")
-
-common_df_disease %>% colnames()
 
 common_df_disease <- full_join(full_join(common_df_disease_acute, 
           common_df_disease_chronic, 
@@ -193,7 +192,7 @@ common_df_disease <- common_df_disease %>%
     chronic_Sex = `chronic_Sex organs`
   ) %>% 
   select(-c(CONDOTH, Acute_GVHD, Chronic_GVHD, 
-            Cross_syndrome, LLTC, PTC, PSOCC, SCHEMOTH)) 
+            Cross_syndrome, SCHEMOTH)) 
 ```
 
 Для нашего текущего датафрейма единица наблюдения -- наличие одного из типов РТПХ у одного пациента.
@@ -463,17 +462,17 @@ numeric_disease_cross_table <- common_df_disease %>% filter(TRIND == "cross synd
 ```
 
 ```{r descriptive_treatment}
-factor_disease_acute_table <- lapply(common_df_disease %>% filter(TRIND == "acute GVHD") %>% 
+factor_treatment_acute_table <- lapply(common_df_treatment %>% filter(TRIND == "acute GVHD") %>% 
          select(where(is.factor)) %>% 
          colnames, 
-       function(x) catStat(common_df_disease %>% filter(TRIND == "acute GVHD"), x) %>% 
+       function(x) catStat(common_df_treatment %>% filter(TRIND == "acute GVHD"), x) %>% 
         as.data.frame) %>% 
   do.call(rbind, .) %>% 
   select(variable, variant, number, proportionIntoGroup, proportionCI) %>% 
   rename(group_proportion = proportionIntoGroup,
          proportion_CI = proportionCI)
 
-numeric_disease_acute_table <- common_df_disease %>% filter(TRIND == "acute GVHD") %>%
+numeric_treatment_acute_table <- common_df_treatment %>% filter(TRIND == "acute GVHD") %>%
   summarise(across(is.numeric, statistics)) %>%
   stack %>% 
   rename(value = values) %>% 
@@ -483,17 +482,17 @@ numeric_disease_acute_table <- common_df_disease %>% filter(TRIND == "acute GVHD
     values_from = value
   )
 
-factor_disease_chronic_table <- lapply(common_df_disease %>% filter(TRIND == "chronic GVHD") %>% 
+factor_treatment_chronic_table <- lapply(common_df_treatment %>% filter(TRIND == "chronic GVHD") %>% 
          select(where(is.factor)) %>% 
          colnames, 
-       function(x) catStat(common_df_disease %>% filter(TRIND == "chronic GVHD"), x) %>% 
+       function(x) catStat(common_df_treatment %>% filter(TRIND == "chronic GVHD"), x) %>% 
         as.data.frame) %>% 
   do.call(rbind, .) %>% 
   select(variable, variant, number, proportionIntoGroup, proportionCI) %>% 
   rename(group_proportion = proportionIntoGroup,
          proportion_CI = proportionCI)
 
-numeric_disease_chronic_table <- common_df_disease %>% filter(TRIND == "chronic GVHD") %>%
+numeric_treatment_chronic_table <- common_df_treatment %>% filter(TRIND == "chronic GVHD") %>%
   summarise(across(is.numeric, statistics)) %>%
   stack %>% 
   rename(value = values) %>% 
@@ -503,17 +502,17 @@ numeric_disease_chronic_table <- common_df_disease %>% filter(TRIND == "chronic 
     values_from = value
   )
 
-factor_disease_cross_table <- lapply(common_df_disease %>% filter(TRIND == "cross syndrome") %>% 
+factor_treatment_cross_table <- lapply(common_df_treatment %>% filter(TRIND == "cross syndrome") %>% 
          select(where(is.factor)) %>% 
          colnames, 
-       function(x) catStat(common_df_disease %>% filter(TRIND == "cross syndrome"), x) %>% 
+       function(x) catStat(common_df_treatment %>% filter(TRIND == "cross syndrome"), x) %>% 
         as.data.frame) %>% 
   do.call(rbind, .) %>% 
   select(variable, variant, number, proportionIntoGroup, proportionCI) %>% 
   rename(group_proportion = proportionIntoGroup,
          proportion_CI = proportionCI)
 
-numeric_disease_cross_table <- common_df_disease %>% filter(TRIND == "cross syndrome") %>%
+numeric_treatment_cross_table <- common_df_treatment %>% filter(TRIND == "cross syndrome") %>%
   summarise(across(is.numeric, statistics)) %>%
   stack %>% 
   rename(value = values) %>% 
