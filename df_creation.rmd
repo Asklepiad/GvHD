@@ -97,7 +97,7 @@ common_df_patient <- common_df %>%
   mutate(across(c(BIRTHDTC,PRSTDTC,PRENDTC,TRDTC,
                   LCDTC,DEATHDTC,RELAPDTC), ~format(as.Date(.x, format = "%d/%m/%Y"), "%d.%m.%Y"))) %>% 
   mutate(across(c(TIMGDOSE, HATGDOSE, TRNUM), ~ as.numeric(.x))) %>% 
-  select(-c(LLTC, PTC, PSOCC, ICD, TUTERM, LLTN))
+  select(-c(LLTC, PTC, PSOCC, ICD, TUTERM, LLTN))   # Удалим ряд классификаций нозологии (оставим только PTCN)
 ```
 
 
@@ -225,8 +225,10 @@ common_df_treatment <- left_join(common_df_disease,
     STERRES = if_else(TRRESP %in% c("no response", 
                                    "progression") & ATCN %in% c("GLUCOCORTICOIDS",
                                                                 "CORTICOSTEROIDS, POTENT (GROUP III)", 
-                                                                "CORTICOSTEROIDS FOR SYSTEMIC USE"),
-                      1, 0) %>% as.factor(),   # Новая колонка с данными о резистентности к стероидам
+                                                                "CORTICOSTEROIDS FOR SYSTEMIC USE"), "resistance", if_else((TRRESP != "no data" | TRRESP != "not estimated") & ATCN %in% c("GLUCOCORTICOIDS",
+                                                        "CORTICOSTEROIDS, POTENT (GROUP III)", 
+                                                        "CORTICOSTEROIDS FOR SYSTEMIC USE"), 
+                                                        "no resistance", "no data")) %>% as.factor(),   # Новая колонка с данными о резистентности к стероидам
     across(c(GVHDTRYN,TRONG), ~ case_when(
       is.na(.x) ~ "no",
       .x == "yes" ~ "yes"
@@ -522,6 +524,104 @@ numeric_treatment_cross_table <- common_df_treatment %>% filter(TRIND == "cross 
     values_from = value
 )
 ```
+## Visualisation
+
+```{r vis_functions}
+bar_custom <- function(df, variable, filt="green"){
+  ggplot(df)+
+    geom_bar(aes(x = pull(df[variable])), fill=filt, colour="black")+
+    labs(x = glue("Градации переменной {variable}"),
+       y = "Количество",
+       title = glue("Частоты единиц наблюдения по категориям\nпеременной {variable}"))+
+    theme_bw()+
+    theme(axis.text.x = element_text(size=14, angle = 25),
+          axis.text.y = element_text(size=14),
+          axis.title.x = element_text(size=18),
+          axis.title.y = element_text(size=18),
+          plot.title = element_text(size=22, hjust=0.5))
+}
+
+factor_count <- function(df, variable1, variable2){
+  ggplot(df)+
+    geom_count(aes(x = pull(df[variable1]), y = pull(df[variable2])))+
+    labs(x = glue("Градации переменной {variable1}"),
+       y =  glue("Градации переменной {variable2}"),
+       title = glue("Количество единиц наблюдения по категориям\nпеременной {variable1} и {variable2}"))+
+    theme_bw()+
+    theme(axis.text.x = element_text(size=14, angle = 25),
+          axis.text.y = element_text(size=14),
+          axis.title.x = element_text(size=18),
+          axis.title.y = element_text(size=18),
+          plot.title = element_text(size=22, hjust=0.5))
+}
+
+
+# Подумать насчет аналога каунтов для процентов
+
+# Общий график для дат
+
+```
+
+```{r fig.height=10, fig.width=15}
+print("Барплоты по пациентам")
+
+lapply(common_df_patient %>% 
+         select(SITE, SEX, PTN, PSOCN, 
+                TRTYPE, TRSOURCE, CONDTYPE,
+                RELAPYN, ALIVE) %>% 
+         colnames, function(x) bar_custom(common_df_patient, x))
+
+print("Барплоты по заболеванию")
+
+lapply(common_df_disease_chronic %>% 
+         select(PTSTAT, SEVGRADE) %>% 
+         colnames, function(x) bar_custom(common_df_disease_chronic, x, "red"))
+
+print("Барплоты по терапии")
+
+lapply(common_df_treatment_chronic %>% 
+         select(LOT, STERRES, TRRESP, ATCN) %>% 
+         colnames, function(x) bar_custom(common_df_treatment_chronic, x, "blue"))
+
+
+print("Каунтплоты по выживаемости -- пациенты")
+lapply(common_df_patient %>% 
+    select(SITE, SEX, PTN, PSOCN, 
+                TRTYPE, TRSOURCE, CONDTYPE,
+                RELAPYN) %>%
+    colnames, function(x) factor_count(common_df_patient, x, "ALIVE"))
+
+print("Каунтплоты по выживаемости -- заболевание")
+lapply(common_df_disease_chronic %>% 
+         select(PTSTAT, SEVGRADE) %>%
+         colnames, function(x) factor_count(common_df_disease_chronic, x, "ALIVE"))
+
+print("Каунтплоты по выживаемости -- терапия")
+lapply(common_df_treatment_chronic %>% 
+         select(LOT, STERRES, TRRESP, ATCN) %>% 
+         colnames, function(x) factor_count(common_df_treatment_chronic, x, "ALIVE"))
+
+
+print("Каунтплоты по ОvsХ -- заболевание")
+lapply(common_df_disease %>% 
+         filter(#уточнить дату окончания исследования#)
+         select(SITE, SEX, PTN, PSOCN, 
+                TRTYPE, TRSOURCE, CONDTYPE,
+                RELAPYN, PTSTAT, SEVGRADE))
+
+# ggplot(common_df_disease_chronic)+
+#     geom_bar(aes(x = pull(common_df_disease_chronic["PTSTAT"])), fill="green", colour="black")+
+#     # labs(x = glue("Градации переменной {variable}"),
+#     #    y = "Количество",
+#     #    title = glue("Частоты единиц наблюдения по категориям\nпеременной {variable}"))+
+#     theme_bw()+
+#     theme(axis.text.x = element_text(size=14, angle = 25),
+#           axis.text.y = element_text(size=14),
+#           axis.title.x = element_text(size=18),
+#           axis.title.y = element_text(size=18),
+#           plot.title = element_text(size=22, hjust=0.5))
+```
+
 
 
 
