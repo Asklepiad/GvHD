@@ -562,7 +562,7 @@ factor_count <- function(df, variable1, variable2){
 
 ```
 
-```{r fig.height=10, fig.width=15}
+```{r fig.height=8, fig.width=12}
 print("Барплоты по пациентам")
 
 lapply(common_df_patient %>% 
@@ -603,11 +603,20 @@ lapply(common_df_treatment_chronic %>%
 
 
 print("Каунтплоты по ОvsХ -- заболевание")
-lapply(common_df_disease %>% 
-         filter(#уточнить дату окончания исследования#)
+# lapply(common_df_disease %>% 
+#          filter(#уточнить дату окончания исследования#)
+#          select(SITE, SEX, PTN, PSOCN, 
+#                 TRTYPE, TRSOURCE, CONDTYPE,
+#                 RELAPYN, PTSTAT, SEVGRADE))
+
+print("Резистентность к стероидам -- терапия")
+lapply(common_df_treatment_chronic %>% 
          select(SITE, SEX, PTN, PSOCN, 
                 TRTYPE, TRSOURCE, CONDTYPE,
-                RELAPYN, PTSTAT, SEVGRADE))
+                RELAPYN, ALIVE, PTSTAT, SEVGRADE,
+                LOT, TRRESP, ATCN) %>% 
+         colnames, function(x) factor_count(common_df_treatment_chronic, x, "STERRES"))
+
 
 # ggplot(common_df_disease_chronic)+
 #     geom_bar(aes(x = pull(common_df_disease_chronic["PTSTAT"])), fill="green", colour="black")+
@@ -622,6 +631,11 @@ lapply(common_df_disease %>%
 #           plot.title = element_text(size=22, hjust=0.5))
 ```
 
+
+
+```{r}
+
+```
 
 
 
@@ -648,6 +662,39 @@ lapply(common_df_treatment_chronic %>%
          colnames, function(y) boxpCreator_inter(common_df_treatment_chronic, y))
 ```
 
+Другой вариант табличек
+
+```{r}
+common_df_patient %>% 
+         select(SITE, SEX, PTN, PSOCN, 
+                TRTYPE, TRSOURCE, CONDTYPE,
+                RELAPYN, ALIVE) %>% 
+  #filter(ALIVE != "unknown") %>% 
+  tbl_summary(by=ALIVE) #%>% 
+  #add_p()
+```
+
+```{r}
+common_df_disease_chronic %>% 
+         select(SITE, SEX, PTN, PSOCN, 
+                TRTYPE, TRSOURCE, CONDTYPE,
+                RELAPYN, ALIVE, 
+                PTSTAT, SEVGRADE) %>% 
+  #filter(ALIVE != "unknown")
+  tbl_summary(by=ALIVE) #%>% 
+ #add_p()
+```
+
+```{r}
+common_df_treatment_chronic %>% 
+         select(SITE, SEX, PTN, PSOCN, 
+                TRTYPE, TRSOURCE, CONDTYPE,
+                RELAPYN, ALIVE, PTSTAT, SEVGRADE,
+                LOT, TRRESP, ATCN, STERRES) %>% 
+         #filter(STERRES != "no data") %>% 
+  tbl_summary(by=STERRES) #%>% 
+  #add_p()
+```
 
 
 ======================================================================
@@ -657,25 +704,25 @@ lapply(common_df_treatment_chronic %>%
 Развлечения с сompareGroups
 
 ```{r}
-library(compareGroups)
-compareGroups(TDINTER ~ ., 
-              data = common_df_treatment_chronic,
-              method = c(triglyc = 2))
+# library(compareGroups)
+# compareGroups(TDINTER ~ ., 
+#               data = common_df_treatment_chronic,
+#               method = c(triglyc = 2))
 ```
 
 
 Описательные статистики рефрактерности: отберем пациентов, которые получали терапию кортикостероидами, расчитаем отдельно для группы с развившейся рефрактерностью и для группы без оной описательные статистики.
 
 ```{r refracterEDA}
-common_df_treatment %>%
-  filter(GVHDTRYN == "yes",
-         ATCN %in% c("GLUCOCORTICOIDS", 
-                     "CORTICOSTEROIDS FOR SYSTEMIC USE", 
-                     "CORTICOSTEROIDS, POTENT (GROUP III)")) %>% 
-  select(SEX, TUTERM, COND, CONDTYPE, DRUGN, chronic_Joints,
-         ALIVE, GVHDAGE, TRIND, RESPEV, STERRES) %>% 
-  tbl_summary(by = STERRES) %>% 
-  add_p()
+# common_df_treatment %>%
+#   filter(GVHDTRYN == "yes",
+#          ATCN %in% c("GLUCOCORTICOIDS", 
+#                      "CORTICOSTEROIDS FOR SYSTEMIC USE", 
+#                      "CORTICOSTEROIDS, POTENT (GROUP III)")) %>% 
+#   select(SEX, TUTERM, COND, CONDTYPE, DRUGN, chronic_Joints,
+#          ALIVE, GVHDAGE, TRIND, RESPEV, STERRES) %>% 
+#   tbl_summary(by = STERRES) #%>% 
+  #add_p()
 ```
 
 
@@ -690,23 +737,23 @@ common_df_treatment %>%
 
 
 ```{r}
-common_df_treatment <- common_df_treatment %>% 
-  mutate(
-    GVHDTRYN = GVHDTRYN %>% as.factor(),
-    LOT = LOT %>% as.factor(),
-    ATCC = ATCC %>% as.factor(),
-    ATCN = ATCN %>% as.factor(),
-    TRRESP = TRRESP %>% as.factor(),
-    RESPEV = RESPEV %>% as.factor(),
-    TRONG = TRONG %>% as.factor(),
-    TRSTDTC = format(as.Date(TRSTDTC, format = "%d/%m/%Y"), "%d.%m.%Y"),
-    TRENDTC = format(as.Date(TRENDTC, format = "%d/%m/%Y"), "%d.%m.%Y")
-  )
+# common_df_treatment <- common_df_treatment %>% 
+#   mutate(
+#     GVHDTRYN = GVHDTRYN %>% as.factor(),
+#     LOT = LOT %>% as.factor(),
+#     ATCC = ATCC %>% as.factor(),
+#     ATCN = ATCN %>% as.factor(),
+#     TRRESP = TRRESP %>% as.factor(),
+#     RESPEV = RESPEV %>% as.factor(),
+#     TRONG = TRONG %>% as.factor(),
+#     TRSTDTC = format(as.Date(TRSTDTC, format = "%d/%m/%Y"), "%d.%m.%Y"),
+#     TRENDTC = format(as.Date(TRENDTC, format = "%d/%m/%Y"), "%d.%m.%Y")
+#   )
 ```
 
 
 ```{r}
-summary(common_df_treatment)
+# summary(common_df_treatment)
 ```
 
 Теперь единица наблюдения -- это случай получения одного препарата у одного пациента. Более аггрегированная статистика может быть получена при группировке по нужной переменной (номер пациента, тип РТПХ или оба).
@@ -716,12 +763,12 @@ summary(common_df_treatment)
 Не очень понятно, как оценивать, какую линию терапии не смогли оценить/какая не показала резистентности, поскольку для подобных ситуаций не указан номер линии терапии. Оставим только данные о факте резистентности.
 
 ```{r}
-common_df_resist <- left_join(common_df_treatment,
-                              fnet$RS_20230119_120304 %>%
-                                filter(REFSTYN == "yes") %>% 
-                                rename(LOT = REFSTLOT) %>% 
-                                select(!SITE),
-                              by = c("SUBJID", "LOT"))
+# common_df_resist <- left_join(common_df_treatment,
+#                               fnet$RS_20230119_120304 %>%
+#                                 filter(REFSTYN == "yes") %>% 
+#                                 rename(LOT = REFSTLOT) %>% 
+#                                 select(!SITE),
+#                               by = c("SUBJID", "LOT"))
 
 # После этого сделать проверку по дате: резистентность не может наступить раньше факта лечения.
 # Вообще везде сделать проверку по дате
