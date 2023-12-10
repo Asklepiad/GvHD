@@ -9,7 +9,8 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 lapply(c("glue", "tidyverse", "openxlsx", 
          "readxl", "rstatix", "gtsummary",
-         "Hmisc", "ggcorrplot", "psych"), require, character.only=TRUE)
+         "Hmisc", "ggcorrplot", "psych",
+         "pheatmap"), require, character.only=TRUE)
 ```
 
 # Notes:
@@ -86,7 +87,6 @@ fgvhd <- fnet$GVHD_20230119_120304 %>%
 ```
 
 
-
 Преобразуем типы переменных
 
 ```{r}
@@ -97,9 +97,14 @@ common_df_patient <- common_df %>%
   mutate(across(c(BIRTHDTC,PRSTDTC,PRENDTC,TRDTC,
                   LCDTC,DEATHDTC,RELAPDTC), ~format(as.Date(.x, format = "%d/%m/%Y"), "%d.%m.%Y"))) %>% 
   mutate(across(c(TIMGDOSE, HATGDOSE, TRNUM), ~ as.numeric(.x))) %>% 
-  select(-c(LLTC, PTC, PSOCC, ICD, TUTERM, LLTN))   # Удалим ряд классификаций нозологии (оставим только PTCN)
+  mutate(PTNA = case_when(
+    str_detect(PTN, "LYMPHOMA", negate = FALSE) ~ "Lymphomas",
+    str_detect(PTN, "ACUTE", negate = FALSE) ~ "Acute leukaemia",
+    str_detect(PTN, "CHRONIC", negate = FALSE) ~ "Chronic leukaemia",
+    TRUE ~ "Other"
+  ) %>% as.factor) %>% 
+  select(-c(LLTC, PTC, PTN, PSOCC, ICD, TUTERM, LLTN))   # Удалим ряд классификаций нозологии (оставим только PTCN)
 ```
-
 
 
 Меняем ошибочную дату
@@ -218,10 +223,15 @@ common_df_disease_cross <- common_df_disease %>%
 common_df_treatment <- left_join(common_df_disease,
           fnet$CM_20230119_120304 %>% select(!SITE),
           by = c("SUBJID", "TRIND")) %>% 
-  select(-c(REPDRUG, DRUGC, ATCC, INGR)) %>%     ### Уберем колонки с дублирующейся и второстепенной информацией
   mutate(
     across(c(TRSTDTC, TRENDTC), ~ format(as.Date(.x, format = "%d/%m/%Y"), "%d.%m.%Y")),
     across(c(GVHDTRYN, DRUGN, ATCN, LOT, TRONG, TRRESP, RESPEV), ~as.factor(.x)),
+    ATCNA = case_when(
+    str_detect(ATCN, "CORTIC", negate = FALSE) ~ "GCS",
+    str_detect(ATCN, "JAK", negate = FALSE) ~ "JAKi",
+    str_detect(ATCN, "CALCINEURIN", negate = FALSE) ~ "CALi",
+    is.na(ATCN) ~ NA,
+    TRUE ~ "Other") %>% as.factor,
     STERRES = if_else(TRRESP %in% c("no response", 
                                    "progression") & ATCN %in% c("GLUCOCORTICOIDS",
                                                                 "CORTICOSTEROIDS, POTENT (GROUP III)", 
@@ -233,7 +243,8 @@ common_df_treatment <- left_join(common_df_disease,
       is.na(.x) ~ "no",
       .x == "yes" ~ "yes"
     ))
-  )
+  ) %>% 
+    select(-c(REPDRUG, DRUGC, ATCC, INGR, ATCN))  ### Уберем колонки с дублирующейся и второстепенной информацией
 ```
 
 Добавим новые переменные: длительность профилактики, длительность лечения, интервал от пересадки КМ до установления диагноза РТПХ, интервал от пересадки КМ до начала профилактики, интервал от конца профилактики до начала лечения.
@@ -266,28 +277,7 @@ common_df_treatment <- common_df_treatment %>%
 #   filter(TPINTER>=3 & TPINTER < 5)   # Удаляем людей, у которых профилактика началась ранее чем на 3-й день после трансплантации, и позднее, чем на 5-й.
 ```
 
-```{r}
-### Пробная штука
 
-test_drive <- common_df_treatment %>% 
-  group_by(SUBJID, TRIND) %>% 
-  mutate(LOT = max(is.numeric(LOT)),
-         GLUK = if_else(ATCN %in% c("GLUCOCORTICOIDS", "CORTICOSTEROIDS, DERMATOLOGICAL PREPARATIONS",
-                                    "CORTICOSTEROIDS FOR SYSTEMIC USE", "CORTICOSTEROIDS, POTENT (GROUP III)"), 1, 0),
-         JAK = if_else(ATCN %in% c("JANUS-ASSOCIATED KINASE (JAK) INHIBITORS"),1,0),
-         CALIN = if_else(ATCN %in% c("CALCINEURIN INHIBITORS"),1,0),
-         OTHER = if_else(ATCN %in% c("OTHER IMMUNOSUPPRESSANTS",
-                                     "SELECTIVE IMMUNOSUPPRESSANTS",
-                                     "INTERLEUKINS",
-                                     "BCR-ABL TYROSINE KINASE INHIBITORS",
-                                     "INTERLEUKIN INHIBITORS",
-                                     "OTHER IMMUNOSTIMULANTS",
-                                     "TUMOR NECROSIS FACTOR ALPHA (TNF-) INHIBITORS",
-                                     "IMIDAZOLE DERIVATIVES",
-                                     "BRUTON'S TYROSINE KINASE (BTK) INHIBITORS",
-                                     NA),1,0)) %>% 
-  select(ATCN, GLUK, JAK, CALIN, OTHER)
-```
 
 
 Разобьем полученные данные на три блока по типу заболевания (опять)
@@ -319,6 +309,22 @@ str(common_df_treatment)
 ```{r}
 summary(common_df_treatment)
 ```
+
+
+# Data cleaning
+
+Страшное
+```{r}
+
+common_df_treatment_chronic %>% 
+  filter(TPINTER >= 3 & TPINTER <5) %>% 
+  filter(PTINTER > 0) %>% 
+  filter(PRINTER < 120)
+  
+common_df_treatment_chronic %>% 
+  filter(PRINTER > 120)
+```
+
 
 
 # EDA
@@ -541,18 +547,39 @@ bar_custom <- function(df, variable, filt="green"){
           plot.title = element_text(size=22, hjust=0.5))
 }
 
-factor_count <- function(df, variable1, variable2){
-  ggplot(df)+
-    geom_count(aes(x = pull(df[variable1]), y = pull(df[variable2])))+
-    labs(x = glue("Градации переменной {variable1}"),
-       y =  glue("Градации переменной {variable2}"),
-       title = glue("Количество единиц наблюдения по категориям\nпеременной {variable1} и {variable2}"))+
+bar_dodge <- function(df, variable1, variable2){
+  axis_x = deparse(substitute(variable2))
+  # axis_fill = deparse(substitute(variable1))
+  axis_fill = variable1
+  print(axis_x)
+  print(axis_fill)
+  
+  subdf <- df[c(axis_x, axis_fill)]%>%
+  group_by(df[c(axis_x, axis_fill)][2]) %>%
+  count({{ variable2 }}) %>%
+  summarise(data1 = {{ variable2 }},
+            CId = binconf(n, sum(n), method = "wilson")[,2] %>% round(2),
+            CIu = binconf(n, sum(n), method = "wilson")[,3] %>% round(2)) %>% 
+  rename(data2 = 1)
+  
+  picture <- ggplot()+
+    geom_bar(data = df, aes(x = {{ variable2 }},
+                     y=..prop..,
+                 fill = pull(df[variable1]),#{{ variable1 }},
+                 group = pull(df[variable1])), position = "dodge")+#{{ variable1 }}), position = "dodge")+
+    geom_errorbar(data = subdf, aes(x = data1, ymin = CId, ymax = CIu, group = data2), position="dodge")+
+    labs(x = glue("Градации переменной {axis_x}"),
+         y = "Количество",
+       fill =  glue("Градации переменной {axis_fill}"),
+       title = glue("Количество единиц наблюдения по категориям\nпеременной {axis_x} и {axis_fill}"))+
     theme_bw()+
     theme(axis.text.x = element_text(size=14, angle = 25),
           axis.text.y = element_text(size=14),
           axis.title.x = element_text(size=18),
           axis.title.y = element_text(size=18),
           plot.title = element_text(size=22, hjust=0.5))
+  
+  return(picture)
 }
 
 
@@ -562,45 +589,43 @@ factor_count <- function(df, variable1, variable2){
 
 ```
 
+
 ```{r fig.height=8, fig.width=12}
 print("Барплоты по пациентам")
 
-lapply(common_df_patient %>% 
-         select(SITE, SEX, PTN, PSOCN, 
+map(common_df_patient %>% 
+         select(SITE, SEX, PTNA, PSOCN, 
                 TRTYPE, TRSOURCE, CONDTYPE,
                 RELAPYN, ALIVE) %>% 
-         colnames, function(x) bar_custom(common_df_patient, x))
+         colnames, \(x) bar_custom(common_df_patient, x))
 
 print("Барплоты по заболеванию")
 
-lapply(common_df_disease_chronic %>% 
+map(common_df_disease_chronic %>% 
          select(PTSTAT, SEVGRADE) %>% 
-         colnames, function(x) bar_custom(common_df_disease_chronic, x, "red"))
+         colnames, \(x) bar_custom(common_df_disease_chronic, x, "red"))
 
 print("Барплоты по терапии")
 
-lapply(common_df_treatment_chronic %>% 
-         select(LOT, STERRES, TRRESP, ATCN) %>% 
-         colnames, function(x) bar_custom(common_df_treatment_chronic, x, "blue"))
+map(common_df_treatment_chronic %>% 
+         select(LOT, STERRES, TRRESP, ATCNA) %>% 
+         colnames, \(x) bar_custom(common_df_treatment_chronic, x, "blue"))
+
 
 
 print("Каунтплоты по выживаемости -- пациенты")
-lapply(common_df_patient %>% 
-    select(SITE, SEX, PTN, PSOCN, 
+map(common_df_patient %>% 
+    select(SITE, SEX, PTNA, PSOCN, 
                 TRTYPE, TRSOURCE, CONDTYPE,
-                RELAPYN) %>%
-    colnames, function(x) factor_count(common_df_patient, x, "ALIVE"))
+                RELAPYN) %>% colnames, \(x) bar_dodge(common_df_patient %>% filter(ALIVE!="unknown"), x, ALIVE))
 
 print("Каунтплоты по выживаемости -- заболевание")
-lapply(common_df_disease_chronic %>% 
-         select(PTSTAT, SEVGRADE) %>%
-         colnames, function(x) factor_count(common_df_disease_chronic, x, "ALIVE"))
+map(common_df_disease_chronic %>% 
+         select(PTSTAT, SEVGRADE) %>% colnames, \(x) bar_dodge(common_df_disease_chronic %>% filter(ALIVE!="unknown"), x, ALIVE))
 
 print("Каунтплоты по выживаемости -- терапия")
-lapply(common_df_treatment_chronic %>% 
-         select(LOT, STERRES, TRRESP, ATCN) %>% 
-         colnames, function(x) factor_count(common_df_treatment_chronic, x, "ALIVE"))
-
+map(common_df_treatment_chronic %>% 
+         select(LOT, STERRES, TRRESP, ATCNA) %>% colnames, \(x) bar_dodge(common_df_treatment_chronic %>% filter(ALIVE!="unknown"), x, ALIVE))
 
 print("Каунтплоты по ОvsХ -- заболевание")
 # lapply(common_df_disease %>% 
@@ -610,30 +635,227 @@ print("Каунтплоты по ОvsХ -- заболевание")
 #                 RELAPYN, PTSTAT, SEVGRADE))
 
 print("Резистентность к стероидам -- терапия")
-lapply(common_df_treatment_chronic %>% 
-         select(SITE, SEX, PTN, PSOCN, 
+map(common_df_treatment_chronic %>% 
+         dplyr::filter(STERRES != "no data") %>% 
+         select(SITE, SEX, PTNA, PSOCN, 
                 TRTYPE, TRSOURCE, CONDTYPE,
                 RELAPYN, ALIVE, PTSTAT, SEVGRADE,
-                LOT, TRRESP, ATCN) %>% 
-         colnames, function(x) factor_count(common_df_treatment_chronic, x, "STERRES"))
+                LOT) %>% colnames, \(x) bar_dodge(common_df_treatment_chronic %>% 
+                                       filter(STERRES != "no data"), x, STERRES))
+```
+
+### Experiments
+
+```{r fig.width=15, fig.height=7}
+# Добавим датасет с аннотацией
+ann_cddc <- common_df_disease_chronic %>% 
+  select(PTNA, TRTYPE, CONDTYPE, RELAPYN, PTSTAT, ALIVE) %>% 
+  as.data.frame(row.names = pull(common_df_disease_chronic["SUBJID"]))
+
+# Добавим палетку к данным
+ann_cddc_palette <- list(
+  PTNA = c("Acute leukaemia"="#052F5F", 
+           "Chronic leukaemia"="#06A77D", 
+           "Lymphomas"="#D5C67A", 
+           "Other"="#F1A208"), 
+  TRTYPE = c("Haplo"="#F4F7BE", "MMUD"="#E5F77D", 
+             "MRD"="#DEBA6F", "MUD"="#823038"), 
+  CONDTYPE = c("MAC"="#729EA1", "RIC"="#DB5375"), 
+  RELAPYN = c("no"="#14591D", "unknown"="#99AA38", 
+              "yes"="#ACD2ED"), 
+  PTSTAT = c("0"="#AAFCB8", "1"="#8CD790", 
+             "2"="#77AF9C", "3"="#285943"),
+  ALIVE = c("alive"="#00BA38", 
+            "died"="#F8766D", 
+            "unknown"="#619CFF")
+)
+
+# Создадим фитмэп
+common_df_disease_chronic %>% 
+  select(starts_with("chronic")) %>% 
+  mutate(across(starts_with("chronic"), as.numeric)) %>% 
+  as.data.frame(row.names = pull(common_df_disease_chronic["SUBJID"])) %>% 
+  pheatmap(cluster_cols = TRUE, cluster_rows = TRUE,
+           annotation_row = ann_cddc, annotation_colors = ann_cddc_palette,
+           cutree_rows=5, cutree_cols=3, fontsize = 9, fontsize_row = 5,
+           width = 20, height = 12)
+
+# Ранжируем наблюдения по принципу выжил-не выжил
+ann_cddc_a <- common_df_disease_chronic %>% 
+  select(PTNA, TRTYPE, CONDTYPE, RELAPYN, PTSTAT, ALIVE) %>% 
+  filter(ALIVE=="alive") %>% 
+  as.data.frame(row.names = pull(common_df_disease_chronic %>% 
+                                   filter(ALIVE=="alive") %>% 
+                                   select("SUBJID")))
+
+pheat_a <- common_df_disease_chronic %>% 
+  filter(ALIVE=="alive") %>% 
+  select(starts_with("chronic")) %>% 
+  mutate(across(starts_with("chronic"), as.numeric)) %>% 
+  as.data.frame(row.names = pull(common_df_disease_chronic %>% 
+                                   filter(ALIVE=="alive") %>% 
+                                   select("SUBJID"))) %>% 
+  pheatmap(cluster_cols = FALSE, cluster_rows = TRUE,
+           annotation_row = ann_cddc_a, annotation_colors = ann_cddc_palette,
+           fontsize = 9, fontsize_row = 5,
+           width = 20, height = 12)
+
+ann_cddc_d <- common_df_disease_chronic %>% 
+  select(PTNA, TRTYPE, CONDTYPE, RELAPYN, PTSTAT, ALIVE) %>% 
+  filter(ALIVE=="died") %>% 
+  as.data.frame(row.names = pull(common_df_disease_chronic %>% 
+                                   filter(ALIVE=="died") %>% 
+                                   select("SUBJID")))
+
+pheat_d <- common_df_disease_chronic %>% 
+  filter(ALIVE=="died") %>% 
+  select(starts_with("chronic")) %>% 
+  mutate(across(starts_with("chronic"), as.numeric)) %>% 
+  as.data.frame(row.names = pull(common_df_disease_chronic %>% 
+                                   filter(ALIVE=="died") %>% 
+                                   select("SUBJID"))) %>% 
+  pheatmap(cluster_cols = FALSE, cluster_rows = TRUE,
+           annotation_row = ann_cddc_d, annotation_colors = ann_cddc_palette,
+           fontsize = 9, fontsize_row = 5,
+           width = 20, height = 12)
+```
 
 
-# ggplot(common_df_disease_chronic)+
-#     geom_bar(aes(x = pull(common_df_disease_chronic["PTSTAT"])), fill="green", colour="black")+
-#     # labs(x = glue("Градации переменной {variable}"),
-#     #    y = "Количество",
-#     #    title = glue("Частоты единиц наблюдения по категориям\nпеременной {variable}"))+
-#     theme_bw()+
-#     theme(axis.text.x = element_text(size=14, angle = 25),
-#           axis.text.y = element_text(size=14),
-#           axis.title.x = element_text(size=18),
-#           axis.title.y = element_text(size=18),
-#           plot.title = element_text(size=22, hjust=0.5))
+```{r}
+### Вариант 1 Группируем по категории (пол, центр и пр.)
+bar_dodge <- function(df, variable1, variable2){
+  axis_x = deparse(substitute(variable1))
+  axis_fill = deparse(substitute(variable2))
+  ggplot(df)+
+    geom_bar(aes(x = {{ variable1 }}, 
+                 y=..prop.., 
+                 fill = {{ variable2 }},
+                 group = {{ variable2 }}), position = "dodge")+
+    labs(x = glue("Градации переменной {axis_x}"),
+         y = "Количество",
+       fill =  glue("Градации переменной {axis_fill}"),
+       title = glue("Количество единиц наблюдения по категориям\nпеременной {axis_x} и {axis_fill}"))+
+    theme_bw()+
+    theme(axis.text.x = element_text(size=14, angle = 25),
+          axis.text.y = element_text(size=14),
+          axis.title.x = element_text(size=18),
+          axis.title.y = element_text(size=18),
+          plot.title = element_text(size=22, hjust=0.5))
+}
+
+### Вариант 2 Группируем по выжил-не выжил
+bar_dodge <- function(df, variable1, variable2){
+  axis_x = deparse(substitute(variable2))
+  axis_fill = deparse(substitute(variable1))
+  ggplot(df)+
+    geom_bar(aes(x = {{ variable2 }}, 
+                 y=..prop.., 
+                 fill = {{ variable1 }},
+                 group = {{ variable1 }}), position = "dodge")+
+    labs(x = glue("Градации переменной {axis_x}"),
+         y = "Количество",
+       fill =  glue("Градации переменной {axis_fill}"),
+       title = glue("Количество единиц наблюдения по категориям\nпеременной {axis_x} и {axis_fill}"))+
+    theme_bw()+
+    theme(axis.text.x = element_text(size=14, angle = 25),
+          axis.text.y = element_text(size=14),
+          axis.title.x = element_text(size=18),
+          axis.title.y = element_text(size=18),
+          plot.title = element_text(size=22, hjust=0.5))
+}
+
+
+bar_dodge <- function(df, variable1, variable2){
+  axis_x = deparse(substitute(variable2))
+  axis_fill = deparse(substitute(variable1))
+  print(axis_x)
+  print(axis_fill)
+  
+  subdf <- df %>%
+    select({{ variable1 }}, {{ variable2 }}) %>%
+    group_by({{ variable1 }}) %>%
+    count({{ variable2 }}) %>%
+    summarise(data1 = {{ variable2 }},
+              CId = binconf(n, sum(n), method = "wilson")[,2] %>% round(2),
+              CIu = binconf(n, sum(n), method = "wilson")[,3] %>% round(2))
+  
+  ggplot()+
+    geom_bar(data = df, aes(x = {{ variable2 }},
+                     y=..prop..,
+                 fill = {{ variable1 }},
+                 group = {{ variable1 }}), position = "dodge")+
+    geom_errorbar(data = subdf, aes(x = data1, ymin = CId, ymax = CIu, group = {{ variable1 }}), position="dodge")+
+    labs(x = glue("Градации переменной {axis_x}"),
+         y = "Количество",
+       fill =  glue("Градации переменной {axis_fill}"),
+       title = glue("Количество единиц наблюдения по категориям\nпеременной {axis_x} и {axis_fill}"))+
+    theme_bw()+
+    theme(axis.text.x = element_text(size=14, angle = 25),
+          axis.text.y = element_text(size=14),
+          axis.title.x = element_text(size=18),
+          axis.title.y = element_text(size=18),
+          plot.title = element_text(size=22, hjust=0.5))
+}
+
+subdf <- common_df_patient %>% 
+  select(SEX, ALIVE) %>% 
+  group_by(SEX) %>% 
+  count(ALIVE) %>% 
+  reframe(data1 = ALIVE,
+            CId = binconf(n, sum(n), method = "wilson")[,2] %>% round(2),
+            CIu = binconf(n, sum(n), method = "wilson")[,3] %>% round(2))
+
+bar_dodge(common_df_patient, SITE, ALIVE)
+
+  ggplot()+
+    geom_bar(data = common_df_patient, aes(x = ALIVE,
+                     y=..prop.., 
+                 fill = SEX,
+                 group = SEX), position = "dodge")+
+    geom_errorbar(data = subdf, aes(x = data1, ymin = CId, ymax = CIu, group = SEX, width = 0.5), position="dodge")
+    labs(x = glue("Градации переменной {axis_x}"),
+         y = "Количество",
+       fill =  glue("Градации переменной {axis_fill}"),
+       title = glue("Количество единиц наблюдения по категориям\nпеременной {axis_x} и {axis_fill}"))+
+    theme_bw()+
+    theme(axis.text.x = element_text(size=14, angle = 25),
+          axis.text.y = element_text(size=14),
+          axis.title.x = element_text(size=18),
+          axis.title.y = element_text(size=18),
+          plot.title = element_text(size=22, hjust=0.5))
+    
+map(common_df_patient %>% 
+  select(SITE, SEX), \(x) bar_dodge(common_df_patient, x, ALIVE))
+SITE, SEX, PTNA, PSOCN, 
+                TRTYPE, TRSOURCE, CONDTYPE,
+                RELAPYN, ALIVE, PTSTAT, SEVGRADE,
+                LOT
+bar_dodge(common_df_patient %>% filter(ALIVE != "unknown"), TRTYPE, ALIVE)
+ggsave("~/bioinf/GvHD/bar_experiment.png")
+```
+
+
+```{r experiments}
+data(tips, package = "reshape2")
+View(tips)
+
+ggplot(tips)+
+  geom_bar(aes(x = day, y = ..prop.., fill=sex, group=sex), position="dodge")
+ggplot(tips, aes(day, group = sex)) + 
+          geom_bar(aes(y = ..prop.., fill = factor(..x..)), stat="count")+
+  scale_y_continuous(labels=scales::percent)+
+  ylab("relative frequencies") +
+          facet_grid(~sex)
 ```
 
 
 
 ```{r}
+# SITE, SEX, PTNA, PSOCN, TRTYPE, TRSOURCE, CONDTYPE, RELAPYN
+
+ggplot(common_df_patient %>% 
+         filter(!is.na(ALIVE) & ALIVE != "unknown"))+
+  geom_bar(aes(x=ALIVE, fill=SEX), position="dodge")
 
 ```
 
@@ -687,10 +909,10 @@ common_df_disease_chronic %>%
 
 ```{r}
 common_df_treatment_chronic %>% 
-         select(SITE, SEX, PTN, PSOCN, 
+         select(SITE, SEX, PTNA, PSOCN, 
                 TRTYPE, TRSOURCE, CONDTYPE,
                 RELAPYN, ALIVE, PTSTAT, SEVGRADE,
-                LOT, TRRESP, ATCN, STERRES) %>% 
+                LOT, TRRESP, ATCNA, STERRES) %>% 
          #filter(STERRES != "no data") %>% 
   tbl_summary(by=STERRES) #%>% 
   #add_p()
