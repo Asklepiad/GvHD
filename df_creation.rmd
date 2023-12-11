@@ -10,7 +10,7 @@ knitr::opts_chunk$set(echo = TRUE)
 lapply(c("glue", "tidyverse", "openxlsx", 
          "readxl", "rstatix", "gtsummary",
          "Hmisc", "ggcorrplot", "psych",
-         "pheatmap"), require, character.only=TRUE)
+         "pheatmap", "kableExtra"), require, character.only=TRUE)
 ```
 
 # Notes:
@@ -93,7 +93,7 @@ fgvhd <- fnet$GVHD_20230119_120304 %>%
 common_df_patient <- common_df %>% 
   mutate(across(c(SITE,SEX,ICD,TUTERM,LLTC,LLTN,PTC,
                   PTN,PSOCC,PSOCN,TRTYPE,TRSOURCE,
-                  CONDTYPE,ALIVE,RELAPYN), ~ as.factor(.x))) %>% 
+                  CONDTYPE,ALIVE,RELAPYN, TIMGDOSE, HATGDOSE), ~ as.factor(.x))) %>% 
   mutate(across(c(BIRTHDTC,PRSTDTC,PRENDTC,TRDTC,
                   LCDTC,DEATHDTC,RELAPDTC), ~format(as.Date(.x, format = "%d/%m/%Y"), "%d.%m.%Y"))) %>% 
   mutate(across(c(TIMGDOSE, HATGDOSE, TRNUM), ~ as.numeric(.x))) %>% 
@@ -416,7 +416,9 @@ factor_disease_acute_table <- lapply(common_df_disease %>% filter(TRIND == "acut
   do.call(rbind, .) %>% 
   select(variable, variant, number, proportionIntoGroup, proportionCI) %>% 
   rename(group_proportion = proportionIntoGroup,
-         proportion_CI = proportionCI)
+         proportion_CI = proportionCI) %>% 
+  kbl() %>%
+  kable_material_dark(full_width=FALSE)
 
 numeric_disease_acute_table <- common_df_disease %>% filter(TRIND == "acute GVHD") %>%
   summarise(across(is.numeric, statistics)) %>%
@@ -426,7 +428,10 @@ numeric_disease_acute_table <- common_df_disease %>% filter(TRIND == "acute GVHD
   pivot_wider(
     names_from = variable,
     values_from = value
-  )
+  ) %>% 
+  t() %>%
+  kbl() %>%
+  kable_material_dark(full_width=FALSE)
 
 factor_disease_chronic_table <- lapply(common_df_disease %>% filter(TRIND == "chronic GVHD") %>% 
          select(where(is.factor)) %>% 
@@ -436,7 +441,9 @@ factor_disease_chronic_table <- lapply(common_df_disease %>% filter(TRIND == "ch
   do.call(rbind, .) %>% 
   select(variable, variant, number, proportionIntoGroup, proportionCI) %>% 
   rename(group_proportion = proportionIntoGroup,
-         proportion_CI = proportionCI)
+         proportion_CI = proportionCI) %>% 
+  kbl() %>%
+  kable_material_dark(full_width=FALSE)
 
 numeric_disease_chronic_table <- common_df_disease %>% filter(TRIND == "chronic GVHD") %>%
   summarise(across(is.numeric, statistics)) %>%
@@ -446,7 +453,10 @@ numeric_disease_chronic_table <- common_df_disease %>% filter(TRIND == "chronic 
   pivot_wider(
     names_from = variable,
     values_from = value
-  )
+  ) %>% 
+  t() %>%
+  kbl() %>%
+  kable_material_dark(full_width=FALSE)
 
 factor_disease_cross_table <- lapply(common_df_disease %>% filter(TRIND == "cross syndrome") %>% 
          select(where(is.factor)) %>% 
@@ -456,7 +466,9 @@ factor_disease_cross_table <- lapply(common_df_disease %>% filter(TRIND == "cros
   do.call(rbind, .) %>% 
   select(variable, variant, number, proportionIntoGroup, proportionCI) %>% 
   rename(group_proportion = proportionIntoGroup,
-         proportion_CI = proportionCI)
+         proportion_CI = proportionCI) %>% 
+  kbl() %>%
+  kable_material_dark(full_width=FALSE)
 
 numeric_disease_cross_table <- common_df_disease %>% filter(TRIND == "cross syndrome") %>%
   summarise(across(is.numeric, statistics)) %>%
@@ -465,8 +477,34 @@ numeric_disease_cross_table <- common_df_disease %>% filter(TRIND == "cross synd
   separate(ind, sep = "_", into = c("variable", "statistic")) %>% 
   pivot_wider(
     names_from = variable,
-    values_from = value
-)
+    values_from = value) %>% 
+  t() %>% 
+  kbl() %>%
+  kable_material_dark(full_width=FALSE)
+```
+
+```{r}
+factor_disease_acute_table
+numeric_disease_acute_table
+factor_disease_chronic_table
+numeric_disease_chronic_table
+factor_disease_cross_table
+numeric_disease_cross_table
+```
+
+
+```{r fig.width=13}
+common_df_disease %>% filter(TRIND == "cross syndrome") %>%
+  summarise(across(is.numeric, statistics)) %>%
+  stack %>% 
+  rename(value = values) %>% 
+  separate(ind, sep = "_", into = c("variable", "statistic")) %>% 
+  pivot_wider(
+    names_from = variable,
+    values_from = value) %>% 
+  t() %>% 
+  kbl() %>%
+  kable_material_dark(full_width=FALSE)
 ```
 
 ```{r descriptive_treatment}
@@ -644,9 +682,7 @@ map(common_df_treatment_chronic %>%
                                        filter(STERRES != "no data"), x, STERRES))
 ```
 
-### Experiments
-
-```{r fig.width=15, fig.height=7}
+```{r heatmaps fig.width=15, fig.height=7}
 # Добавим датасет с аннотацией
 ann_cddc <- common_df_disease_chronic %>% 
   select(PTNA, TRTYPE, CONDTYPE, RELAPYN, PTSTAT, ALIVE) %>% 
@@ -718,6 +754,58 @@ pheat_d <- common_df_disease_chronic %>%
            annotation_row = ann_cddc_d, annotation_colors = ann_cddc_palette,
            fontsize = 9, fontsize_row = 5,
            width = 20, height = 12)
+```
+
+
+
+### Experiments
+
+```{r}
+log_reg <- glm(ALIVE ~ PTNA + TRTYPE + CONDTYPE + RELAPYN + PTSTAT + chronic_GT, common_df_treatment_chronic, family=binomial)
+summary(log_reg)
+```
+
+```{r}
+1 - log_reg$deviance / log_reg$null.deviance
+```
+
+```{r}
+lmtest::lrtest(log_reg)
+```
+
+```{r}
+
+chisq_custom <- function(df, variable1, variable2){
+  intermediate_table <- df %>% 
+  select({{ variable1 }}, {{ variable2 }}) %>% 
+  group_by({{ variable1 }}, {{ variable2 }}) %>% 
+  count() %>% 
+  pivot_wider(names_from = {{ variable2 }}, values_from = n) %>% 
+  ungroup
+  rows_names <- intermediate_table %>% 
+    select(1) %>% pull
+  cols_names <- intermediate_table %>% 
+    select(-1) %>% colnames
+  for_chi_sq <- intermediate_table %>% 
+    select(-1) %>% 
+    as.matrix
+  dimnames(for_chi_sq) <- list(independent = rows_names, dependent = cols_names)
+  result <- chisq.test(for_chi_sq)
+  return(result)
+}
+
+chisq_custom(common_df_treatment_chronic %>% filter(ALIVE != "unknown"),
+             PTNA, ALIVE)
+chisq_custom(common_df_treatment_chronic %>% filter(ALIVE != "unknown"),
+             TRTYPE, ALIVE)
+chisq_custom(common_df_treatment_chronic %>% filter(ALIVE != "unknown"),
+             CONDTYPE, ALIVE)
+chisq_custom(common_df_treatment_chronic %>% filter(ALIVE != "unknown"),
+             RELAPYN, ALIVE)
+chisq_custom(common_df_treatment_chronic %>% filter(ALIVE != "unknown"),
+             PTSTAT, ALIVE)
+chisq_custom(common_df_treatment_chronic %>% filter(ALIVE != "unknown"),
+             chronic_GT, ALIVE)
 ```
 
 
