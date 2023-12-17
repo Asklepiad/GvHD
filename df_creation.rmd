@@ -52,7 +52,7 @@ common_df <- left_join(left_join(left_join(left_join(fnet$DM_20230119_120304, # 
                        by = "SUBJID"),
                        fnet$STAT_20230119_120304 %>% 
                        select(!SITE) %>% 
-                       rename(ALIVE = PTSTAT)  , # %>% slice(-1),
+                       dplyr::rename(ALIVE = PTSTAT)  , # %>% slice(-1),
                        by = "SUBJID")
 ```
 
@@ -90,6 +90,7 @@ fgvhd <- fnet$GVHD_20230119_120304 %>%
 Преобразуем типы переменных
 
 ```{r}
+set.seed(1999)
 common_df_patient <- common_df %>% 
   mutate(across(c(SITE,SEX,ICD,TUTERM,LLTC,LLTN,PTC,
                   PTN,PSOCC,PSOCN,TRTYPE,TRSOURCE,
@@ -98,12 +99,23 @@ common_df_patient <- common_df %>%
                   LCDTC,DEATHDTC,RELAPDTC), ~format(as.Date(.x, format = "%d/%m/%Y"), "%d.%m.%Y"))) %>% 
   mutate(across(c(TIMGDOSE, HATGDOSE, TRNUM), ~ as.numeric(.x))) %>% 
   mutate(PTNA = case_when(
-    str_detect(PTN, "LYMPHOMA", negate = FALSE) ~ "Lymphomas",
+    # str_detect(PTN, "LYMPHOMA", negate = FALSE) ~ "Lymphomas", Лимфомы ушли в "другое"
     str_detect(PTN, "ACUTE", negate = FALSE) ~ "Acute leukaemia",
     str_detect(PTN, "CHRONIC", negate = FALSE) ~ "Chronic leukaemia",
     TRUE ~ "Other"
   ) %>% as.factor) %>% 
-  select(-c(LLTC, PTC, PTN, PSOCC, ICD, TUTERM, LLTN))   # Удалим ряд классификаций нозологии (оставим только PTCN)
+  select(-c(LLTC, PTC, PTN, PSOCC, ICD, TUTERM, LLTN)) #%>% 
+#   rowwise %>% 
+#   mutate(SITE = case_when
+#          (
+#            SITE == 1 ~ 01,
+#            SITE == 2 ~ 02,
+#            SITE == 3 ~ sample(c(01,02,04),1),
+#            SITE == 4 ~ 04
+#          )) %>% 
+#   ungroup
+#   # Удалим ряд классификаций нозологии (оставим только PTCN)
+# common_df_patient$SITE
 ```
 
 
@@ -180,9 +192,18 @@ common_df_disease <- common_df_disease %>%
     across(c(AGVHDOCC,CGVHDOCC), ~ case_when(
       is.na(.x) ~ "no",
       .x == "yes" ~ "yes"
-    ))
+    )),
+    TDINTER = (as.Date(GVHDDTC,        ## От пересадки до РТПХ
+                format = "%d.%m.%Y") - as.Date(TRDTC, 
+                                               format = "%d.%m.%Y")) %>% as.character %>% as.numeric,
+    TPINTER = (as.Date(PRSTDTC,        ## От пересадки до профилактики
+                format = "%d.%m.%Y") - as.Date(TRDTC, 
+                                               format = "%d.%m.%Y")) %>% as.character %>% as.numeric,
+    PRINTER = (as.Date(PRENDTC,        ## Профилактика
+                format = "%d.%m.%Y") - as.Date(PRSTDTC, 
+                                               format = "%d.%m.%Y")) %>% as.character %>% as.numeric
 ) %>% 
-  rename(           ## Переименуем ряд переменных
+  dplyr::rename(           ## Переименуем ряд переменных
     Acute_GVHD = `Acute GVHD`,
     Chronic_GVHD = `Chronic GVHD`,
     Cross_syndrome = `Cross syndrome`,
@@ -198,6 +219,9 @@ common_df_disease <- common_df_disease %>%
   ) %>% 
   select(-c(CONDOTH, Acute_GVHD, Chronic_GVHD, 
             Cross_syndrome, SCHEMOTH)) 
+
+common_df_disease <- common_df_disease %>%
+  filter(TPINTER>=3 & TPINTER < 5)   # Удаляем людей, у которых профилактика началась ранее чем на 3-й день после трансплантации, и позднее, чем на 5-й.
 ```
 
 Для нашего текущего датафрейма единица наблюдения -- наличие одного из типов РТПХ у одного пациента.
@@ -253,19 +277,10 @@ common_df_treatment <- left_join(common_df_disease,
 #View(common_df_treatment_chronic)
 common_df_treatment <- common_df_treatment %>% 
   mutate(
-    TDINTER = (as.Date(GVHDDTC,        ## От пересадки до РТПХ
-                format = "%d.%m.%Y") - as.Date(TRDTC, 
-                                               format = "%d.%m.%Y")) %>% as.character %>% as.numeric,
-    TPINTER = (as.Date(PRSTDTC,        ## От пересадки до профилактики
-                format = "%d.%m.%Y") - as.Date(TRDTC, 
-                                               format = "%d.%m.%Y")) %>% as.character %>% as.numeric,
     PTINTER = (as.Date(PRENDTC,        ## От конца профилатики до начала лечения
                 format = "%d.%m.%Y") - as.Date(TRSTDTC, 
                                                format = "%d.%m.%Y")) %>% as.character %>% as.numeric,
     
-    PRINTER = (as.Date(PRENDTC,        ## Профилактика
-                format = "%d.%m.%Y") - as.Date(PRSTDTC, 
-                                               format = "%d.%m.%Y")) %>% as.character %>% as.numeric,
     TRINTER = if_else(is.na(TRENDTC), (as.Date(LCDTC,        ## Лечение
                 format = "%d.%m.%Y") - as.Date(TRSTDTC, 
                                                format = "%d.%m.%Y")) %>% as.character %>% as.numeric, (as.Date(TRENDTC, 
@@ -273,8 +288,7 @@ common_df_treatment <- common_df_treatment %>%
                                                format = "%d.%m.%Y")) %>% as.character %>% as.numeric)
   )
 
-# common_df_treatment_chronic <- common_df_treatment_chronic %>% 
-#   filter(TPINTER>=3 & TPINTER < 5)   # Удаляем людей, у которых профилактика началась ранее чем на 3-й день после трансплантации, и позднее, чем на 5-й.
+
 ```
 
 
@@ -293,11 +307,10 @@ common_df_treatment_cross <- common_df_treatment %>%
   filter(TRIND == "cross syndrome")
 ```
 
-## Adiitional transformations
-
-
-
-
+```{r}
+write_csv(common_df_treatment_acute, "acute_dataset.csv")
+write_csv(common_df_treatment_chronic, "chronic_dataset.csv")
+```
 
 
 # Checking correctness of data
@@ -310,26 +323,7 @@ str(common_df_treatment)
 summary(common_df_treatment)
 ```
 
-
-# Data cleaning
-
-Страшное
-```{r}
-
-common_df_treatment_chronic %>% 
-  filter(TPINTER >= 3 & TPINTER <5) %>% 
-  filter(PTINTER > 0) %>% 
-  filter(PRINTER < 120)
-  
-common_df_treatment_chronic %>% 
-  filter(PRINTER > 120)
-```
-
-
-
 # EDA
-
-
 
 Подсчитаем описательные статистики
 
@@ -347,7 +341,7 @@ catStat <- function(df, factorr){
     select(variant = {{  factorr }}) %>% 
     mutate(variant = as.character(variant) %>%  replace_na("no_data") %>% as.factor()) %>% 
     count(variant) %>% 
-    rename(number = n) %>% 
+    dplyr::rename(number = n) %>% 
     mutate(proportionIntoGroup = round(number/sum(number),3),
            proportionCI = paste(
              round(binconf(number, sum(number), method = "wilson")[,2], 3),
@@ -391,7 +385,7 @@ factor_patient_table <- lapply(common_df_patient %>%
         as.data.frame) %>% 
   do.call(rbind, .) %>% 
   select(variable, variant, number, proportionIntoGroup, proportionCI) %>% 
-  rename(group_proportion = proportionIntoGroup,
+  dplyr::rename(group_proportion = proportionIntoGroup,
          proportion_CI = proportionCI)
 
 
@@ -399,7 +393,7 @@ factor_patient_table <- lapply(common_df_patient %>%
 numeric_patient_table <- common_df_patient %>% 
   summarise(across(is.numeric, statistics)) %>%
   stack %>% 
-  rename(value = values) %>% 
+  dplyr::rename(value = values) %>% 
   separate(ind, sep = "_", into = c("variable", "statistic")) %>% 
   pivot_wider(
     names_from = variable,
@@ -415,7 +409,7 @@ factor_disease_acute_table <- lapply(common_df_disease %>% filter(TRIND == "acut
         as.data.frame) %>% 
   do.call(rbind, .) %>% 
   select(variable, variant, number, proportionIntoGroup, proportionCI) %>% 
-  rename(group_proportion = proportionIntoGroup,
+  dplyr::rename(group_proportion = proportionIntoGroup,
          proportion_CI = proportionCI) %>% 
   kbl() %>%
   kable_material_dark(full_width=FALSE)
@@ -423,7 +417,7 @@ factor_disease_acute_table <- lapply(common_df_disease %>% filter(TRIND == "acut
 numeric_disease_acute_table <- common_df_disease %>% filter(TRIND == "acute GVHD") %>%
   summarise(across(is.numeric, statistics)) %>%
   stack %>% 
-  rename(value = values) %>% 
+  dplyr::rename(value = values) %>% 
   separate(ind, sep = "_", into = c("variable", "statistic")) %>% 
   pivot_wider(
     names_from = variable,
@@ -440,7 +434,7 @@ factor_disease_chronic_table <- lapply(common_df_disease %>% filter(TRIND == "ch
         as.data.frame) %>% 
   do.call(rbind, .) %>% 
   select(variable, variant, number, proportionIntoGroup, proportionCI) %>% 
-  rename(group_proportion = proportionIntoGroup,
+  dplyr::rename(group_proportion = proportionIntoGroup,
          proportion_CI = proportionCI) %>% 
   kbl() %>%
   kable_material_dark(full_width=FALSE)
@@ -448,7 +442,7 @@ factor_disease_chronic_table <- lapply(common_df_disease %>% filter(TRIND == "ch
 numeric_disease_chronic_table <- common_df_disease %>% filter(TRIND == "chronic GVHD") %>%
   summarise(across(is.numeric, statistics)) %>%
   stack %>% 
-  rename(value = values) %>% 
+  dplyr::rename(value = values) %>% 
   separate(ind, sep = "_", into = c("variable", "statistic")) %>% 
   pivot_wider(
     names_from = variable,
@@ -465,7 +459,7 @@ factor_disease_cross_table <- lapply(common_df_disease %>% filter(TRIND == "cros
         as.data.frame) %>% 
   do.call(rbind, .) %>% 
   select(variable, variant, number, proportionIntoGroup, proportionCI) %>% 
-  rename(group_proportion = proportionIntoGroup,
+  dplyr::rename(group_proportion = proportionIntoGroup,
          proportion_CI = proportionCI) %>% 
   kbl() %>%
   kable_material_dark(full_width=FALSE)
@@ -473,7 +467,7 @@ factor_disease_cross_table <- lapply(common_df_disease %>% filter(TRIND == "cros
 numeric_disease_cross_table <- common_df_disease %>% filter(TRIND == "cross syndrome") %>%
   summarise(across(is.numeric, statistics)) %>%
   stack %>% 
-  rename(value = values) %>% 
+  dplyr::rename(value = values) %>% 
   separate(ind, sep = "_", into = c("variable", "statistic")) %>% 
   pivot_wider(
     names_from = variable,
@@ -497,7 +491,7 @@ numeric_disease_cross_table
 common_df_disease %>% filter(TRIND == "cross syndrome") %>%
   summarise(across(is.numeric, statistics)) %>%
   stack %>% 
-  rename(value = values) %>% 
+  dplyr::rename(value = values) %>% 
   separate(ind, sep = "_", into = c("variable", "statistic")) %>% 
   pivot_wider(
     names_from = variable,
@@ -515,13 +509,13 @@ factor_treatment_acute_table <- lapply(common_df_treatment %>% filter(TRIND == "
         as.data.frame) %>% 
   do.call(rbind, .) %>% 
   select(variable, variant, number, proportionIntoGroup, proportionCI) %>% 
-  rename(group_proportion = proportionIntoGroup,
+  dplyr::rename(group_proportion = proportionIntoGroup,
          proportion_CI = proportionCI)
 
 numeric_treatment_acute_table <- common_df_treatment %>% filter(TRIND == "acute GVHD") %>%
   summarise(across(is.numeric, statistics)) %>%
   stack %>% 
-  rename(value = values) %>% 
+  dplyr::rename(value = values) %>% 
   separate(ind, sep = "_", into = c("variable", "statistic")) %>% 
   pivot_wider(
     names_from = variable,
@@ -535,13 +529,13 @@ factor_treatment_chronic_table <- lapply(common_df_treatment %>% filter(TRIND ==
         as.data.frame) %>% 
   do.call(rbind, .) %>% 
   select(variable, variant, number, proportionIntoGroup, proportionCI) %>% 
-  rename(group_proportion = proportionIntoGroup,
+  dplyr::rename(group_proportion = proportionIntoGroup,
          proportion_CI = proportionCI)
 
 numeric_treatment_chronic_table <- common_df_treatment %>% filter(TRIND == "chronic GVHD") %>%
   summarise(across(is.numeric, statistics)) %>%
   stack %>% 
-  rename(value = values) %>% 
+  dplyr::rename(value = values) %>% 
   separate(ind, sep = "_", into = c("variable", "statistic")) %>% 
   pivot_wider(
     names_from = variable,
@@ -555,19 +549,22 @@ factor_treatment_cross_table <- lapply(common_df_treatment %>% filter(TRIND == "
         as.data.frame) %>% 
   do.call(rbind, .) %>% 
   select(variable, variant, number, proportionIntoGroup, proportionCI) %>% 
-  rename(group_proportion = proportionIntoGroup,
+  dplyr::rename(group_proportion = proportionIntoGroup,
          proportion_CI = proportionCI)
 
 numeric_treatment_cross_table <- common_df_treatment %>% filter(TRIND == "cross syndrome") %>%
   summarise(across(is.numeric, statistics)) %>%
   stack %>% 
-  rename(value = values) %>% 
+  dplyr::rename(value = values) %>% 
   separate(ind, sep = "_", into = c("variable", "statistic")) %>% 
   pivot_wider(
     names_from = variable,
     values_from = value
 )
 ```
+
+## Хронь 
+
 ## Visualisation
 
 ```{r vis_functions}
@@ -598,7 +595,7 @@ bar_dodge <- function(df, variable1, variable2){
   summarise(data1 = {{ variable2 }},
             CId = binconf(n, sum(n), method = "wilson")[,2] %>% round(2),
             CIu = binconf(n, sum(n), method = "wilson")[,3] %>% round(2)) %>% 
-  rename(data2 = 1)
+  dplyr::rename(data2 = 1)
   
   picture <- ggplot()+
     geom_bar(data = df, aes(x = {{ variable2 }},
@@ -682,6 +679,13 @@ map(common_df_treatment_chronic %>%
                                        filter(STERRES != "no data"), x, STERRES))
 ```
 
+```{r}
+common_df_patient
+common_df_treatment_acute %>% 
+  select(SUBJID) %>% unique
+```
+
+
 ```{r heatmaps fig.width=15, fig.height=7}
 # Добавим датасет с аннотацией
 ann_cddc <- common_df_disease_chronic %>% 
@@ -756,20 +760,218 @@ pheat_d <- common_df_disease_chronic %>%
            width = 20, height = 12)
 ```
 
+## Острая
+
+## Visualisation
+
+```{r fig.height=8, fig.width=12}
+
+print("Барплоты по заболеванию")
+
+map(common_df_disease_acute %>% 
+         select(AGVHDGR) %>% 
+         colnames, \(x) bar_custom(common_df_disease_acute, x, "red"))
+
+print("Барплоты по терапии")
+
+map(common_df_treatment_acute %>% 
+         select(LOT, STERRES, TRRESP, ATCNA) %>% 
+         colnames, \(x) bar_custom(common_df_treatment_acute, x, "blue"))
+
+
+
+print("Каунтплоты по выживаемости -- пациенты")
+map(common_df_patient %>% 
+    select(SITE, SEX, PTNA, PSOCN, 
+                TRTYPE, TRSOURCE, CONDTYPE,
+                RELAPYN) %>% colnames, \(x) bar_dodge(common_df_patient %>% filter(ALIVE!="unknown"), x, ALIVE))
+
+print("Каунтплоты по выживаемости -- заболевание")
+map(common_df_disease_acute %>% 
+         select(AGVHDGR) %>% colnames, \(x) bar_dodge(common_df_disease_acute %>% filter(ALIVE!="unknown"), x, ALIVE))
+
+print("Каунтплоты по выживаемости -- терапия")
+map(common_df_treatment_acute %>% 
+         select(LOT, STERRES, TRRESP, ATCNA) %>% colnames, \(x) bar_dodge(common_df_treatment_acute %>% filter(ALIVE!="unknown"), x, ALIVE))
+
+print("Каунтплоты по ОvsХ -- заболевание")
+# lapply(common_df_disease %>% 
+#          filter(#уточнить дату окончания исследования#)
+#          select(SITE, SEX, PTN, PSOCN, 
+#                 TRTYPE, TRSOURCE, CONDTYPE,
+#                 RELAPYN, PTSTAT, SEVGRADE))
+
+print("Резистентность к стероидам -- терапия")
+map(common_df_treatment_acute %>% 
+         dplyr::filter(STERRES != "no data") %>% 
+         select(SITE, SEX, PTNA, PSOCN, 
+                TRTYPE, TRSOURCE, CONDTYPE,
+                RELAPYN, ALIVE, AGVHDGR,
+                LOT) %>% colnames, \(x) bar_dodge(common_df_treatment_acute %>% 
+                                       filter(STERRES != "no data"), x, STERRES))
+```
+
+```{r}
+common_df_patient
+common_df_treatment_acute %>% 
+  select(SUBJID) %>% unique
+```
+
+
+```{r heatmaps fig.width=15, fig.height=7}
+# Добавим датасет с аннотацией
+ann_cddc <- common_df_disease_acute %>% 
+  select(PTNA, TRTYPE, CONDTYPE, RELAPYN, PTSTAT, ALIVE) %>% 
+  as.data.frame(row.names = pull(common_df_disease_acute["SUBJID"]))
+
+# Добавим палетку к данным
+ann_cddc_palette <- list(
+  PTNA = c("Acute leukaemia"="#052F5F", 
+           "acute leukaemia"="#06A77D", 
+           "Lymphomas"="#D5C67A", 
+           "Other"="#F1A208"), 
+  TRTYPE = c("Haplo"="#F4F7BE", "MMUD"="#E5F77D", 
+             "MRD"="#DEBA6F", "MUD"="#823038"), 
+  CONDTYPE = c("MAC"="#729EA1", "RIC"="#DB5375"), 
+  RELAPYN = c("no"="#14591D", "unknown"="#99AA38", 
+              "yes"="#ACD2ED"), 
+  PTSTAT = c("0"="#AAFCB8", "1"="#8CD790", 
+             "2"="#77AF9C", "3"="#285943"),
+  ALIVE = c("alive"="#00BA38", 
+            "died"="#F8766D", 
+            "unknown"="#619CFF")
+)
+
+# Создадим фитмэп
+common_df_disease_acute %>% 
+  select(starts_with("acute")) %>% 
+  mutate(across(starts_with("acute"), as.numeric)) %>% 
+  as.data.frame(row.names = pull(common_df_disease_acute["SUBJID"])) %>% 
+  pheatmap(cluster_cols = TRUE, cluster_rows = TRUE,
+           annotation_row = ann_cddc, annotation_colors = ann_cddc_palette,
+           cutree_rows=5, cutree_cols=3, fontsize = 9, fontsize_row = 5,
+           width = 20, height = 12)
+
+# Ранжируем наблюдения по принципу выжил-не выжил
+ann_cddc_a <- common_df_disease_acute %>% 
+  select(PTNA, TRTYPE, CONDTYPE, RELAPYN, PTSTAT, ALIVE) %>% 
+  filter(ALIVE=="alive") %>% 
+  as.data.frame(row.names = pull(common_df_disease_acute %>% 
+                                   filter(ALIVE=="alive") %>% 
+                                   select("SUBJID")))
+
+pheat_a <- common_df_disease_acute %>% 
+  filter(ALIVE=="alive") %>% 
+  select(starts_with("acute")) %>% 
+  mutate(across(starts_with("acute"), as.numeric)) %>% 
+  as.data.frame(row.names = pull(common_df_disease_acute %>% 
+                                   filter(ALIVE=="alive") %>% 
+                                   select("SUBJID"))) %>% 
+  pheatmap(cluster_cols = FALSE, cluster_rows = TRUE,
+           annotation_row = ann_cddc_a, annotation_colors = ann_cddc_palette,
+           fontsize = 9, fontsize_row = 5,
+           width = 20, height = 12)
+
+ann_cddc_d <- common_df_disease_acute %>% 
+  select(PTNA, TRTYPE, CONDTYPE, RELAPYN, PTSTAT, ALIVE) %>% 
+  filter(ALIVE=="died") %>% 
+  as.data.frame(row.names = pull(common_df_disease_acute %>% 
+                                   filter(ALIVE=="died") %>% 
+                                   select("SUBJID")))
+
+pheat_d <- common_df_disease_acute %>% 
+  filter(ALIVE=="died") %>% 
+  select(starts_with("acute")) %>% 
+  mutate(across(starts_with("acute"), as.numeric)) %>% 
+  as.data.frame(row.names = pull(common_df_disease_acute %>% 
+                                   filter(ALIVE=="died") %>% 
+                                   select("SUBJID"))) %>% 
+  pheatmap(cluster_cols = FALSE, cluster_rows = TRUE,
+           annotation_row = ann_cddc_d, annotation_colors = ann_cddc_palette,
+           fontsize = 9, fontsize_row = 5,
+           width = 20, height = 12)
+```
+
 
 
 ### Experiments
 
 ```{r}
-log_reg <- glm(ALIVE ~ PTNA + TRTYPE + CONDTYPE + RELAPYN + PTSTAT + chronic_GT, common_df_treatment_chronic, family=binomial)
+probe_1 <- common_df_disease_chronic %>% 
+  select(ALIVE, PTNA, TRTYPE, CONDTYPE, RELAPYN, PTSTAT, chronic_GT, GVHDAGE)
+log_reg1 <- glm(ALIVE ~ PTNA + TRTYPE + CONDTYPE + RELAPYN + PTSTAT + chronic_GT + GVHDAGE, probe_1, family=binomial)
+summary(log_reg1)
+```
+
+
+```{r}
+probe_2 <- common_df_disease_chronic %>% 
+  select(ALIVE, PTNA, TRTYPE, CONDTYPE, RELAPYN, PTSTAT, chronic_GT, GVHDAGE) %>% 
+  mutate(GVHDAGE = scale(GVHDAGE))
+log_reg2 <- glm(ALIVE ~ PTNA + TRTYPE + CONDTYPE + RELAPYN + PTSTAT + chronic_GT + GVHDAGE, probe_2, family=binomial)
+summary(log_reg2)
+```
+
+
+```{r}
+log_reg <- glm(ALIVE ~ PTNA + TRTYPE + CONDTYPE + RELAPYN + PTSTAT + chronic_GT + GVHDAGE, common_df_treatment_chronic, family=binomial)
 summary(log_reg)
 ```
 
 ```{r}
-1 - log_reg$deviance / log_reg$null.deviance
+library(broom)
+
+# broom::augment(log_reg1, common_df_disease_chronic %>% 
+#                  select(ALIVE, PTNA, TRTYPE, CONDTYPE, RELAPYN, PTSTAT, chronic_GT, GVHDAGE) %>% 
+#                  na.omit) %>% 
+smth <- predict(log_reg1, common_df_disease_chronic %>% 
+                 select(ALIVE, PTNA, TRTYPE, CONDTYPE, RELAPYN, PTSTAT, chronic_GT, GVHDAGE) %>% 
+                 na.omit, type="response") %>% sapply(., function(x) ifelse(x>=0.5, 1, 0))
+new_df <- common_df_disease_chronic %>% 
+                 select(ALIVE, PTNA, TRTYPE, CONDTYPE, RELAPYN, PTSTAT, chronic_GT, GVHDAGE) %>% 
+                 na.omit
+
+table1 <- common_df_disease_chronic %>% 
+                 select(ALIVE, PTNA, TRTYPE, CONDTYPE, RELAPYN, PTSTAT, chronic_GT, GVHDAGE) %>% 
+                 na.omit %>%  
+  mutate(ALIVE = case_when(
+    ALIVE == "alive" ~ 0,
+    ALIVE == "died" ~ 1
+  ),
+  smth = predict(log_reg1, common_df_disease_chronic %>% 
+                 select(ALIVE, PTNA, TRTYPE, CONDTYPE, RELAPYN, PTSTAT, chronic_GT, GVHDAGE) %>% 
+                 na.omit, type="response") %>% sapply(., function(x) ifelse(x>=0.5, 1, 0))) %>% 
+  select(ALIVE, smth) %>% 
+  group_by(ALIVE) %>% 
+  count(smth) %>% 
+  na.omit
+
+table2 <- common_df_disease_chronic %>% 
+                 select(ALIVE, PTNA, TRTYPE, CONDTYPE, RELAPYN, PTSTAT, chronic_GT, GVHDAGE) %>% 
+                 na.omit %>%  
+  mutate(ALIVE = case_when(
+    ALIVE == "alive" ~ 0,
+    ALIVE == "died" ~ 1
+  ),
+  smth = predict(log_reg2, common_df_disease_chronic %>% 
+                 select(ALIVE, PTNA, TRTYPE, CONDTYPE, RELAPYN, PTSTAT, chronic_GT, GVHDAGE) %>% 
+                   mutate(GVHDAGE = scale(GVHDAGE)) %>% 
+                 na.omit, type="response") %>% sapply(., function(x) ifelse(x>=0.5, 1, 0))) %>% 
+  select(ALIVE, smth) %>% 
+  group_by(ALIVE) %>% 
+  count(smth) %>% 
+  na.omit
+
+
+
+log_reg1$fitted.values
+common_df_disease_chronic %>% nrow
+
 ```
 
+
 ```{r}
+1 - log_reg$deviance / log_reg$null.deviance
 lmtest::lrtest(log_reg)
 ```
 
@@ -781,7 +983,8 @@ chisq_custom <- function(df, variable1, variable2){
   group_by({{ variable1 }}, {{ variable2 }}) %>% 
   count() %>% 
   pivot_wider(names_from = {{ variable2 }}, values_from = n) %>% 
-  ungroup
+  ungroup %>% 
+  replace(is.na(.), 0)
   rows_names <- intermediate_table %>% 
     select(1) %>% pull
   cols_names <- intermediate_table %>% 
@@ -807,6 +1010,15 @@ chisq_custom(common_df_treatment_chronic %>% filter(ALIVE != "unknown"),
 chisq_custom(common_df_treatment_chronic %>% filter(ALIVE != "unknown"),
              chronic_GT, ALIVE)
 ```
+
+```{r}
+
+```
+
+
+
+
+
 
 
 ```{r}
