@@ -1,0 +1,498 @@
+---
+title: "df_creation_bs"
+author: "Bogdan Sotnikov"
+date: '2023-11-15'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+lapply(c("glue", "tidyverse", "openxlsx", 
+         "readxl", "rstatix", "gtsummary",
+         "Hmisc", "ggcorrplot", "psych"), require, character.only=TRUE)
+library(tidymodels)
+library(embed)
+library(themis)
+library(car)
+library(vip)
+library(Boruta)
+library(doParallel)
+library(flextable)
+```
+
+# Notes:
+1. All whitespaces changed to underscores.
+2. File вид_ТГСК.xlsx переименован в gvhd_type.xlsx
+
+
+# Data reading 
+
+```{r}
+
+files_dd <- list.files(path = "./raw_data/3_Derivable_Datasets/", 
+                       pattern = ".xls", 
+                       all.files = FALSE, 
+                       full.names = FALSE)
+fdd <- do.call("<-", 
+               list(files_dd, 
+                    sapply(files_dd, 
+                           function(x) 
+                             read.xlsx(paste0("./raw_data/3_Derivable_Datasets/", x ), 
+                                       na.strings = NA))))
+
+names(fdd) <- str_split_i(names(fdd), "\\.", 1)
+
+files_fet <- list.files(path = "./raw_data/Final_export_tables/", 
+                        pattern = ".xls", 
+                        all.files = FALSE, 
+                        full.names = FALSE)
+
+fnet <- do.call("<-", list(files_fet, 
+                           sapply(files_fet, 
+                                   function(x) 
+                                     read.xlsx(paste0("./raw_data/Final_export_tables/", x), 
+                                               na.strings = NA, 
+                                               startRow = 1))))
+
+names(fnet) <- str_split_i(names(fnet), "\\.", 1)
+
+```
+
+# Dataframe building
+
+```{r}
+
+# Если вы не убирали вторую строку в экселях, раскомментируйте концы строчек кода ниже (и уберите лишнюю запятую)
+common_df <- left_join(left_join(left_join(left_join(fnet$DM_20230119_120304, # %>% slice(-1),
+                       fnet$TU_20230119_120304 %>% select(!SITE), # %>% slice(-1),
+                       by = "SUBJID"),
+                       fnet$PREV_20230119_120304 %>% select(!SITE), # %>% slice(-1),
+                       by = "SUBJID"),
+                       fnet$TR_20230119_120304 %>% select(!SITE), # %>% slice(-1),
+                       by = "SUBJID"),
+                       fnet$STAT_20230119_120304 %>% 
+                       select(!SITE) %>% 
+                       rename(ALIVE = PTSTAT)  , # %>% slice(-1),
+                       by = "SUBJID")
+
+```
+
+```{r}
+
+## Добавим датасет по факту наличия той или иной формы РТПХ
+## Предварительно упростим их и переведем в широкий формат
+agvhd <- fnet$AGVHD_20230119_120304 %>% 
+  pivot_wider(names_from = AGVHDLOC,
+              values_from = AGVHDST,
+              names_prefix = "acute_") %>% 
+  select(!acute_NA) %>% 
+  group_by(SUBJID) %>% 
+  mutate(across(everything(), ~toString(unique(na.omit(.x))))) %>%  
+  ungroup() %>% 
+  distinct(SUBJID, .keep_all = TRUE)
+
+cgvhd <- fnet$CGVHD_20230119_120304 %>% 
+  pivot_wider(names_from = CGVHDLOC,
+              values_from = DAMDEG,
+              names_prefix = "chronic_") %>%
+  select(-c(chronic_NA, TYPEOTH)) %>% 
+  group_by(SUBJID) %>% 
+  mutate(across(everything(), ~toString(unique(na.omit(.x))))) %>%  
+  ungroup() %>% 
+  distinct(SUBJID, .keep_all = TRUE)
+
+fgvhd <- fnet$GVHD_20230119_120304 %>% 
+  pivot_wider(names_from = GVHDCAT, values_from = GVHDYN) %>% 
+  select(!GVHDOTHM) %>%
+  filter(!is.na(GVHDDTC) | `Cross syndrome` == "yes")
+
+```
+
+Преобразуем типы переменных
+
+```{r}
+
+common_df_patient <- common_df %>% 
+  mutate(across(c(SITE,SEX,ICD,TUTERM,LLTC,LLTN,PTC,
+                  PTN,PSOCC,PSOCN,TRTYPE,TRSOURCE,
+                  CONDTYPE,ALIVE,RELAPYN), ~ as.factor(.x))) %>% 
+  mutate(across(c(BIRTHDTC,PRSTDTC,PRENDTC,TRDTC,
+                  LCDTC,DEATHDTC,RELAPDTC), ~format(as.Date(.x, format = "%d/%m/%Y"), "%d.%m.%Y"))) %>% 
+  mutate(across(c(TIMGDOSE, HATGDOSE, TRNUM), ~ as.numeric(.x))) %>% 
+  select(-c(LLTC, PTC, PSOCC, ICD, TUTERM, LLTN)) %>% 
+  mutate(across(c(TRNUM, TIMGDOSE, HATGDOSE), ~ as.factor(.x)))
+
+```
+
+Меняем ошибочную дату
+```{r}
+
+common_df_patient <- common_df_patient %>% 
+  mutate(PRSTDTC = if_else(SUBJID == "01095", "08.07.2021", PRSTDTC))
+
+```
+
+Для текущего датафрейма единица наблюдения -- 1 пациент
+
+Добавим информацию про острую, хроническую и оверлап РТПХ
+
+```{r}
+
+## Объединим с уже имеющимися данными
+
+common_df_disease <-   left_join(common_df_patient,
+                       fgvhd %>% select(!SITE),
+                       by="SUBJID")
+
+## Разобьем на 3 датасета: острую, хроническую РТПХ и оверлап-синдром
+
+common_df_disease_acute <- left_join(common_df_disease %>% 
+  filter(`Acute GVHD` == "yes"), 
+  agvhd %>% select(!SITE), 
+  by = "SUBJID")
+
+common_df_disease_chronic <- left_join(common_df_disease %>% 
+  filter(`Chronic GVHD` == "yes"), 
+  cgvhd %>% select(!SITE), 
+  by = "SUBJID")
+
+common_df_disease_cross <- common_df_disease %>% 
+  filter(`Cross syndrome` == "yes")
+
+common_df_disease <- full_join(full_join(common_df_disease_acute, 
+          common_df_disease_chronic, 
+          by = common_df_disease %>% colnames()),
+          common_df_disease_cross,
+          by = common_df_disease %>% colnames())
+
+```
+
+Преобразуем типы переменных.
+
+```{r}
+
+## Добавим префикс acute и chronic к пораженным органам
+common_df_disease <- common_df_disease %>% 
+  mutate(
+    TRIND = case_when(                     # Эта переменная нужна для последующего объединения с терапией
+     `Acute GVHD` == "yes" ~ "acute GVHD",
+     `Chronic GVHD` == "yes" ~ "chronic GVHD",
+     `Cross syndrome` == "yes" ~ "cross syndrome") %>% as.factor()) %>% 
+  mutate(
+    across(c(AGVHDOCC,AGVHDGR,acute_Skin,acute_Liver,
+             `acute_Upper gastrointestinal tract`,
+             `acute_Lower gastrointestinal tract`,
+             CGVHDOCC,PTSTAT,SEVTYPE,SEVGRADE,`chronic_Skin involvement, % lesion of body surface area`,
+             `chronic_Sclerotic changes of the skin`,
+             `chronic_Changes in oral cavity`,
+             `chronic_Eyes`,
+             `chronic_Gastrointestinal tract`, chronic_Liver, chronic_Lungs,
+             `chronic_Lungs functional assessment`,
+             `chronic_Joints and fascia`,
+             `chronic_Sex organs`,GVHDMETH,
+             `Acute GVHD`,`Chronic GVHD`,`Cross syndrome`), ~ as.factor(.x)),
+    GVHDAGE = GVHDAGE %>% as.numeric(),
+    GVHDDTC = format(as.Date(GVHDDTC, format = "%d/%m/%Y"), "%d.%m.%Y"),
+    COND = case_when(  ## Переместим другую терапию в общий столбец и удалим столбец CONDOTH
+      COND == "other" ~ CONDOTH, 
+      COND != "other" ~  COND) %>% as.factor(),
+    PRSCHEM = case_when(   ## Переместим другую профилактику в общий столбец и удалим столбец SCHEMOTH
+    PRSCHEM == "other" ~ SCHEMOTH, 
+    PRSCHEM != "other" ~  PRSCHEM),
+    across(c(AGVHDOCC,CGVHDOCC), ~ case_when(
+      is.na(.x) ~ "no",
+      .x == "yes" ~ "yes"))) %>% 
+  rename(           ## Переименуем ряд переменных
+    Acute_GVHD = `Acute GVHD`,
+    Chronic_GVHD = `Chronic GVHD`,
+    Cross_syndrome = `Cross syndrome`,
+    acute_UGT = `acute_Upper gastrointestinal tract`,
+    acute_LGT = `acute_Lower gastrointestinal tract`,
+    chronic_Skin_perc = `chronic_Skin involvement, % lesion of body surface area`,
+    chronic_Skin_scl = `chronic_Sclerotic changes of the skin`,
+    chronic_oral = `chronic_Changes in oral cavity`,
+    chronic_GT =`chronic_Gastrointestinal tract`,
+    chronic_Lungs_func = `chronic_Lungs functional assessment`,
+    chronic_Joints = `chronic_Joints and fascia`,
+    chronic_Sex = `chronic_Sex organs`) %>% 
+  select(-c(CONDOTH, Acute_GVHD, Chronic_GVHD, 
+            Cross_syndrome, SCHEMOTH)) %>% 
+  mutate(across(c(TRNUM, TIMGDOSE, HATGDOSE), ~ as.factor(.x)))
+
+```
+
+Для нашего текущего датафрейма единица наблюдения -- наличие одного из типов РТПХ у одного пациента.
+
+Вновь разобъем датасет на три субдатасета по заболеваниям
+
+```{r}
+
+common_df_disease_acute <- common_df_disease %>% 
+  filter(TRIND == "acute GVHD")
+
+common_df_disease_chronic <- common_df_disease %>% 
+  filter(TRIND == "chronic GVHD")
+
+common_df_disease_cross <- common_df_disease %>% 
+  filter(TRIND == "cross syndrome")
+
+```
+
+Добавим информацию о полученной терапии
+
+```{r}
+
+common_df_treatment <- 
+  left_join(common_df_disease,
+          fnet$CM_20230119_120304 %>% select(!SITE),
+          by = c("SUBJID", "TRIND")) %>% 
+  select(-c(REPDRUG, DRUGC, ATCC, INGR)) %>%
+  mutate(
+    across(c(TRSTDTC, TRENDTC), ~ format(as.Date(.x, format = "%d/%m/%Y"), "%d.%m.%Y")),
+    across(c(GVHDTRYN, DRUGN, ATCN, LOT, TRONG, TRRESP, RESPEV), ~as.factor(.x)),
+    across(c(GVHDTRYN,TRONG), ~ case_when(
+      is.na(.x) ~ "no",
+      .x == "yes" ~ "yes")))
+
+```
+
+Добавим новые переменные: длительность профилактики, длительность лечения, интервал от пересадки КМ до установления диагноза РТПХ, интервал от пересадки КМ до начала профилактики, интервал от конца профилактики до начала лечения.
+
+```{r}
+
+common_df_treatment <- common_df_treatment %>% 
+  mutate(
+    TDINTER = (as.Date(GVHDDTC,        ## От пересадки до РТПХ
+                format = "%d.%m.%Y") - as.Date(TRDTC, 
+                                               format = "%d.%m.%Y")) %>% as.character %>% as.numeric,
+    TPINTER = (as.Date(PRSTDTC,        ## От пересадки до профилактики
+                format = "%d.%m.%Y") - as.Date(TRDTC, 
+                                               format = "%d.%m.%Y")) %>% as.character %>% as.numeric,
+    PTINTER = (as.Date(PRENDTC,        ## От конца профилатики до начала лечения
+                format = "%d.%m.%Y") - as.Date(TRSTDTC, 
+                                               format = "%d.%m.%Y")) %>% as.character %>% as.numeric,
+    
+    PRINTER = (as.Date(PRENDTC,        ## Профилактика
+                format = "%d.%m.%Y") - as.Date(PRSTDTC, 
+                                               format = "%d.%m.%Y")) %>% as.character %>% as.numeric,
+    TRINTER = if_else(is.na(TRENDTC), (as.Date(LCDTC,        ## Лечение
+                format = "%d.%m.%Y") - as.Date(TRSTDTC, 
+                                               format = "%d.%m.%Y")) %>% as.character %>% as.numeric, (as.Date(TRENDTC, 
+                format = "%d.%m.%Y") - as.Date(TRSTDTC, 
+                                               format = "%d.%m.%Y")) %>% as.character %>% as.numeric))
+
+```
+
+Разобьем полученные данные на три блока по типу заболевания (опять)
+
+```{r}
+
+common_df_treatment_acute <- common_df_treatment %>% 
+  filter(TRIND == "acute GVHD")
+
+common_df_treatment_chronic <- common_df_treatment %>% 
+  filter(TRIND == "chronic GVHD")
+
+common_df_treatment_cross <- common_df_treatment %>% 
+  filter(TRIND == "cross syndrome")
+
+```
+
+## Adiitional transformations
+# Checking correctness of data
+
+```{r}
+
+summary(common_df_treatment)
+common_df_treatment %>% glimpse()
+
+```
+
+```{r}
+summary(common_df_treatment)
+```
+
+
+# EDA
+
+Подсчитаем описательные статистики
+
+Нам интересно посмотреть на следующие переменные
+Факторные: SEX (пол), TUTERM (диагноз), PSOCN (группа заболеваний) TIMGDOSE? (есть-нет), HATGDOSE (есть-нет),
+TRTYPE (тип донора), TRSOURCE (источник КМ), ALIVE (выжил ли пациент), RELAPYN (был ли рецидив), PTSTAT (состояние пациента при обследовании), SEVGRADE? (степень тяжести), все, что начинается с chronic? (проявления заболевания), STERRES (развилась ли резистентность к стероидам)
+Числовые: TRNUM (число пересадок), GVHDAGE (возраст начала заболевания), все, что заканчивается на INTER (временные интервалы)
+
+```{r descriptive_factor}
+# Функция подсчитывает число единиц наблюдения для градации фактора,
+# долю наблюдений с данной градацией от всех наблюдений,
+# доверительный интервал (по Уилсону) для этой доли
+catStat <- function(df, factorr){
+  df %>% 
+    select(variant = {{  factorr }}) %>% 
+    mutate(variant = as.character(variant) %>%  replace_na("no_data") %>% as.factor()) %>% 
+    count(variant) %>% 
+    rename(number = n) %>% 
+    mutate(proportionIntoGroup = round(number/sum(number),3),
+           proportionCI = paste(
+             round(binconf(number, sum(number), method = "wilson")[,2], 3),
+             round(binconf(number, sum(number), method = "wilson")[,3], 3),
+             sep="-"),
+           variable = factorr) %>% 
+  relocate(variable, .after=1)
+}
+
+### Функция стандартной ошибки
+se <- function(x){
+  sd(x, na.rm=TRUE)/sqrt(length(x))
+}
+
+### Вычисляем описательные статистики для нумерических переменных
+statistics <- list(
+  Counts = ~ length(.x) %>% as.character(),
+  NAs = ~ sum(is.na(.x)) %>% as.character(),
+  Mean = ~ mean(.x, na.rm=TRUE) %>% round(3) %>% as.character(),
+  SD = ~ sd(.x, na.rm=TRUE) %>% round(3) %>% as.character(),
+  CI95 = ~ paste(round(mean(.x, na.rm=TRUE) - 1.96 * se(.x), 3),
+                    round(mean(.x, na.rm=TRUE) + 1.96 * se(.x), 3), sep="-"),
+  Median = ~ median(.x, na.rm=TRUE) %>% round(3) %>% as.character(),
+  Quantiles = ~ paste(round(quantile(.x, probs=c(0.25), na.rm=TRUE), 3), 
+                        round(quantile(.x, probs=c(0.75), na.rm=TRUE), 3), sep="-"),
+  Iqr = ~ IQR(.x, na.rm=TRUE) %>% round(3) %>% as.character(),
+  Min = ~ min(.x, na.rm=TRUE) %>% round(3) %>% as.character(),
+  Max = ~ max(.x, na.rm=TRUE) %>% round(3) %>% as.character()
+  )
+
+
+```
+
+По-хорошему весь нижележащий код надо обернуть в функции
+
+```{r descriptive_patient}
+factor_patient_table <- lapply(common_df_patient %>% 
+         select(where(is.factor)) %>% 
+         colnames, 
+       function(x) catStat(common_df_patient, x) %>% 
+        as.data.frame) %>% 
+  do.call(rbind, .) %>% 
+  select(variable, variant, number, proportionIntoGroup, proportionCI) %>% 
+  rename(group_proportion = proportionIntoGroup,
+         proportion_CI = proportionCI)
+factor_patient_table %>% flextable() %>% theme_box() %>% merge_v()
+```
+
+```{r descriptive_disease}
+factor_disease_acute_table <- lapply(common_df_disease %>% filter(TRIND == "acute GVHD") %>%
+                                       select(-contains("chronic_")) %>% 
+  select(-CGVHDOCC, -PTSTAT, -SEVTYPE, -SEVGRADE, -TRIND, -AGVHDOCC) %>%
+         select(where(is.factor)) %>% 
+         colnames, 
+       function(x) catStat(common_df_disease %>% filter(TRIND == "acute GVHD"), x) %>% 
+        as.data.frame) %>% 
+  do.call(rbind, .) %>% 
+  select(variable, variant, number, proportionIntoGroup, proportionCI) %>% 
+  rename(group_proportion = proportionIntoGroup,
+         proportion_CI = proportionCI)
+factor_disease_acute_table %>% flextable() %>% theme_box() %>% merge_v()
+
+numeric_disease_acute_table <- common_df_disease %>% filter(TRIND == "acute GVHD") %>%
+  summarise(across(is.numeric, statistics)) %>%
+  stack %>% 
+  rename(value = values) %>% 
+  separate(ind, sep = "_", into = c("variable", "statistic")) %>% 
+  pivot_wider(
+    names_from = variable,
+    values_from = value
+  )
+numeric_disease_acute_table %>% flextable() %>% theme_box() %>% merge_v()
+```
+
+```{r descriptive_disease}
+factor_disease_chronic_table <- lapply(common_df_disease %>% filter(TRIND == "chronic GVHD") %>%
+                                         select(-contains("acute_")) %>%
+                                         select(-AGVHDGR) %>%
+                                         
+         select(where(is.factor)) %>% 
+         colnames, 
+       function(x) catStat(common_df_disease %>% filter(TRIND == "chronic GVHD"), x) %>% 
+        as.data.frame) %>% 
+  do.call(rbind, .) %>% 
+  select(variable, variant, number, proportionIntoGroup, proportionCI) %>% 
+  rename(group_proportion = proportionIntoGroup,
+         proportion_CI = proportionCI)
+factor_disease_chronic_table %>% flextable() %>% theme_box() %>% merge_v()
+
+numeric_disease_chronic_table <- common_df_disease %>% filter(TRIND == "chronic GVHD") %>%
+  summarise(across(is.numeric, statistics)) %>%
+  stack %>% 
+  rename(value = values) %>% 
+  separate(ind, sep = "_", into = c("variable", "statistic")) %>% 
+  pivot_wider(
+    names_from = variable,
+    values_from = value
+  )
+numeric_disease_chronic_table %>% flextable() %>% theme_box() %>% merge_v()
+```
+
+```{r}
+#LOT1
+factor_treatment_acute_table1 <- lapply(common_df_treatment %>% 
+                                         filter(TRIND == "acute GVHD") %>% 
+                                         filter(LOT == "1") %>%
+                                          select(where(is.factor)) %>% 
+                                          select(ALIVE, ATCN, DRUGN, TRRESP, RESPEV) %>% 
+         colnames, 
+       function(x) catStat(common_df_treatment %>% filter(TRIND == "acute GVHD")%>% 
+                                         filter(LOT == "1"), x) %>% 
+        as.data.frame) %>% 
+  do.call(rbind, .) %>% 
+  select(variable, variant, number, proportionIntoGroup, proportionCI) %>% 
+  rename(group_proportion = proportionIntoGroup,
+         proportion_CI = proportionCI) 
+factor_treatment_acute_table1 %>% flextable() %>% theme_box() %>% merge_v()
+
+factor_treatment_chronic_table1 <- lapply(common_df_treatment %>% filter(TRIND == "chronic GVHD") %>% 
+         filter(LOT == "1") %>%
+                                          select(where(is.factor)) %>% 
+                                          select(ALIVE, ATCN, DRUGN, TRRESP, RESPEV) %>% 
+         colnames, 
+       function(x) catStat(common_df_treatment %>% filter(TRIND == "chronic GVHD")%>% 
+                                         filter(LOT == "1"), x) %>% 
+        as.data.frame) %>% 
+  do.call(rbind, .) %>% 
+  select(variable, variant, number, proportionIntoGroup, proportionCI) %>% 
+  rename(group_proportion = proportionIntoGroup,
+         proportion_CI = proportionCI)
+factor_treatment_chronic_table1 %>% flextable() %>% theme_box() %>% merge_v()
+```
+
+```{r}
+#LOT2
+factor_treatment_acute_table2 <- lapply(common_df_treatment %>% 
+                                         filter(TRIND == "acute GVHD") %>%
+                                         filter(LOT == "2") %>%
+                                          select(where(is.factor)) %>% 
+                                          select(ALIVE, ATCN, DRUGN, TRRESP, RESPEV) %>% 
+         colnames, 
+       function(x) catStat(common_df_treatment %>% filter(TRIND == "acute GVHD")%>% 
+                                         filter(LOT == "2"), x) %>% 
+        as.data.frame) %>% 
+  do.call(rbind, .) %>% 
+  select(variable, variant, number, proportionIntoGroup, proportionCI) %>% 
+  rename(group_proportion = proportionIntoGroup,
+         proportion_CI = proportionCI)
+factor_treatment_acute_table2 %>% flextable() %>% theme_box() %>% merge_v()
+
+factor_treatment_chronic_table2 <- lapply(common_df_treatment %>% filter(TRIND == "chronic GVHD") %>% 
+         filter(LOT == "2") %>%
+                                          select(where(is.factor)) %>% 
+                                          select(ALIVE, ATCN, DRUGN, TRRESP, RESPEV) %>% 
+         colnames, 
+       function(x) catStat(common_df_treatment %>% filter(TRIND == "chronic GVHD")%>% 
+                                         filter(LOT == "2"), x) %>% 
+        as.data.frame) %>% 
+  do.call(rbind, .) %>% 
+  select(variable, variant, number, proportionIntoGroup, proportionCI) %>% 
+  rename(group_proportion = proportionIntoGroup,
+         proportion_CI = proportionCI)
+factor_treatment_chronic_table2 %>% flextable() %>% theme_box() %>% merge_v()
+```

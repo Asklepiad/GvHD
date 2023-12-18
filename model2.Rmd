@@ -1,0 +1,259 @@
+---
+title: "Untitled"
+author: "Ivan Lebedev"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(tidymodels)
+library(embed)
+library(themis)
+library(car)
+library(psych)
+library(vip)
+library(Boruta)
+library(doParallel)
+```
+
+```{r}
+df_ref_an <- df_surv_an %>% 
+  rename("TRIND" = "TRIND...46", "SUBJID" = "SUBJID...2") %>% 
+  select(-BIRTHDTC, -PSOCN, -PRSCHEM, -GVHDMETH, -AGVHDOCC, -CGVHDOCC, -PTSTAT,	-SEVTYPE, -contains("chronic_"), -contains("acute_"), -SUBJID...47, -TRIND...48, -GVHDYN, -GVHDOTHM, -REFSTLOT, -event, -futime, -TDINTER, -RElINTER, -etime, -COND) %>% 
+  mutate(SEVGRADE = case_when(
+   SEVGRADE == "severe" ~ 3, 
+   SEVGRADE == "moderate" ~ 2,
+   SEVGRADE == "mild" ~ 1,
+   SEVGRADE == NA ~ NA)) %>% 
+  unite("GVHDGRADE", SEVGRADE, AGVHDGR, na.rm = T)
+
+CM <- fnet$CM_20230119_120304 %>% 
+  mutate(ATCN = case_when(ATCN == "GLUCOCORTICOIDS" ~ "steroids", 
+                          ATCN == "CORTICOSTEROIDS, POTENT (GROUP III)" ~ "steroids",
+                          ATCN == "CORTICOSTEROIDS FOR SYSTEMIC USE" ~ "steroids",
+                          ATCN == "CORTICOSTEROIDS, DERMATOLOGICAL PREPARATIONS" ~ "steroids",
+                          ATCN == "JANUS-ASSOCIATED KINASE (JAK) INHIBITORS" ~ "jak",
+                          ATCN == "CALCINEURIN INHIBITORS" ~ "calin",
+                          ATCN == "OTHER IMMUNOSUPPRESSANTS" ~ "other",
+                          ATCN == "INTERLEUKIN INHIBITORS" ~ "other",
+                          ATCN == "SELECTIVE IMMUNOSUPPRESSANTS" ~ "other",
+                          ATCN == "BRUTON'S TYROSINE KINASE (BTK) INHIBITORS" ~ "other",
+                          ATCN == "BCR-ABL TYROSINE KINASE INHIBITORS" ~ "other",
+                          ATCN == "TUMOR NECROSIS FACTOR ALPHA (TNF-) INHIBITORS" ~ "other",
+                          ATCN == "INTERLEUKINS" ~ "other",
+                          ATCN == "IMIDAZOLE DERIVATIVES" ~ "other",
+                          ATCN == "NA" ~ NA)) %>% 
+  select(ATCN, SUBJID, LOT, TRIND, TRSTDTC, TRENDTC)
+
+ref_binaric <- 
+  left_join(df_ref_an, 
+            CM,
+            by = c("SUBJID", "TRIND")) %>% 
+  distinct(SUBJID, .keep_all = TRUE) %>% 
+  mutate(
+    across(c(TRSTDTC, TRENDTC, REFSTDTC), ~ format(as.Date(.x, format = "%d/%m/%Y"), "%d.%m.%Y")),
+    across(c(ATCN, LOT), ~as.factor(.x))) %>%
+  mutate(До_проф = (as.Date(PRSTDTC, format = "%d.%m.%Y") - as.Date(TRDTC, format = "%d.%m.%Y")) %>% 
+           as.character %>% 
+           as.numeric,
+         Пер_леч = (as.Date(TRENDTC, format = "%d.%m.%Y") - as.Date(TRSTDTC, format = "%d.%m.%Y")) %>%
+           as.character %>% 
+           as.numeric
+         ) %>% 
+  mutate(REF = case_when(
+    REFSTYN == "yes" ~ "1", 
+    REFSTYN == "no" ~ "0",
+    REFSTYN == "stated subjectively" ~ NA,
+    REFSTYN == "impossible to state" ~ NA),
+    across(c(REF, RELAPYN), ~as.factor(.x))) %>% 
+  select(-SUBJID, -SITE, -PRSTDTC, -PRENDTC, -TRDTC, -LCDTC, -DEATHDTC, -RELAPDTC, -GVHDDTC, -REFSTDTC, -TRSTDTC, -TRENDTC, -ALIVE, -REFSTYN, -LOT) %>% 
+  mutate(PTN =  ifelse(PTN == "ACUTE LYMPHOCYTIC LEUKAEMIA",
+                       "ACUTE LYMPHOCYTIC LEUKAEMIA", 
+                       ifelse(PTN == "ACUTE MYELOID LEUKAEMIA", 
+                              "ACUTE MYELOID LEUKAEMIA",
+                              "OTHER"))) %>% 
+  mutate(HATGDOSE =  ifelse(HATGDOSE == "0",
+                       "0", "1"),
+         TIMGDOSE = ifelse(TIMGDOSE == "0",
+                           "0", "1")) %>% 
+  mutate(TRNUM = ifelse(TRNUM == "1",
+                           "1", "2+"),
+         across(c(PTN, TIMGDOSE, HATGDOSE, TRNUM, GVHDGRADE), ~as.factor(.x))) %>%
+  filter(REF != "NA") %>% 
+  select(-До_проф, -Пер_леч)
+```
+
+```{r}
+ref_binaric %>% glimpse()
+ref_binaric %>% count(REF)
+ref_binaric %>% tbl_summary(by = REF)
+ref_binaric %>% 
+  select(where(is.factor)) %>% 
+  map(function(x) sum(is.na(x))/length(x))
+ref_binaric %>% 
+  select(where(is.factor)) %>% 
+  map(table)
+```
+
+```{r}
+ref_binaric<- ref_binaric[sample(nrow(ref_binaric)), ]
+split_train_test1 <- initial_split(ref_binaric, strata=REF, prop =0.8)
+ref_train1 <- split_train_test1 %>% training()
+ref_test1 <- split_train_test1 %>% testing()
+```
+
+```{r}
+cat_metric1 <- yardstick::metric_set(
+  yardstick::bal_accuracy,
+  yardstick::precision,
+  yardstick::recall,
+  yardstick::f_meas,
+  yardstick::specificity,
+  yardstick::sensitivity,
+  yardstick::j_index
+)
+```
+
+```{r}
+ref_recipe1 <- 
+  recipe(REF~., ref_train1) %>% 
+  step_zv(all_predictors()) %>% 
+  step_nzv(all_predictors()) %>% 
+  step_normalize(all_numeric_predictors()) %>% 
+  step_lencode_bayes(all_nominal_predictors(), outcome = vars(REF)) %>% 
+  step_adasyn(REF) %>% 
+  prep()
+
+ref_recipe1 %>% juice() %>% count(REF)
+```
+
+```{r}
+logisitic_model1 <- logistic_reg(mixture = tune(), penalty = tune()) %>% 
+  set_engine("glmnet")
+```
+
+```{r}
+cv_samples1 <- vfold_cv(ref_train1, strata = REF, v = 10)
+```
+
+```{r}
+parameteres_grid1 <- grid_regular(penalty(), mixture(), levels = 10)
+```
+
+```{r}
+reg_workflow1 <- workflow() %>% 
+  add_recipe(ref_recipe1) %>% 
+  add_model(logisitic_model1)
+```
+
+```{r}
+grid_search1 <- reg_workflow1 %>% 
+  tune_grid(
+    object = reg_workflow1,
+    resamples = cv_samples1,
+    grid = parameteres_grid1,
+    control = control_grid(save_pred = TRUE),
+    metrics = metric_set(j_index)
+  )
+```
+
+```{r}
+grid_search1 %>% 
+  collect_metrics() %>% 
+  ggplot(aes(mixture, mean)) +
+  geom_errorbar(aes(ymin = mean - std_err, ymax = mean + std_err)) +
+  geom_line(size = 1)
+```
+
+```{r}
+best_by_j_index1 <- grid_search1 %>% select_best("j_index")
+
+final_reg_model1 <- finalize_workflow(
+  reg_workflow1,
+  best_by_j_index1
+)
+```
+
+```{r}
+final_reg_model1 %>% 
+  fit(ref_train1) %>% 
+  extract_fit_parsnip() %>% 
+  vi(lamda = best_by_j_index1$penalty) %>% 
+  mutate(Variable = fct_reorder(Variable, Importance)) %>% 
+  ggplot(aes(x = Importance, y = Variable, fill = Sign)) +
+  geom_col() +
+  labs(y = NULL)
+```
+
+```{r}
+final_reg_model1 %>% 
+  fit(ref_train1) %>% 
+  predict(ref_test1) %>% 
+  pull() -> final_test_prediction1
+
+metrics_on_test1 <- cat_metric1(truth = truth_values, estimate = estimate_values, tibble(truth_values = ref_test1$REF, estimate_values = final_test_prediction1)) %>% 
+  rename(test_estimate = `.estimate`) %>% 
+  select(!`.estimator`)
+
+final_reg_model1 %>% 
+  fit(ref_train1) %>% 
+  predict(ref_train1) %>% 
+  pull() -> final_train_prediction1
+
+metrics_on_train1 <- cat_metric1(truth = truth_values, estimate = estimate_values, tibble(truth_values = ref_train1$REF, estimate_values = final_train_prediction1)) %>% 
+  rename(train_estimate = `.estimate`) %>% 
+  select(!`.estimator`)
+
+metrics_on_test1 %>% 
+  left_join(metrics_on_train1, by = ".metric") %>% 
+  mutate(
+    differencies = train_estimate - test_estimate 
+  )
+```
+
+```{r}
+last_fit(
+  final_reg_model1,
+  split_train_test1
+  ) -> final_log_model_all_data1
+
+final_log_model_all_data1 %>% 
+  extract_workflow() %>% 
+  predict(ref_binaric, type ="class") %>% 
+  pull() -> class_prediction1
+
+final_log_model_all_data1 %>% 
+  extract_workflow() %>% 
+  predict(ref_binaric, type ="prob") %>% 
+  pull() -> prob_prediction1
+
+log_model_results1 <- tibble(truth = ref_binaric$REF,
+                            estimate = class_prediction1,
+                            prob_yes = 1 - prob_prediction1)
+
+cat_metric1(truth = truth, estimate = estimate, log_model_results1)
+
+log_model_results1 %>% 
+  roc_curve(truth = truth, prob_yes) %>% 
+  autoplot()
+```
+
+```{r}
+ref_binaric %>% 
+  drop_na() -> ref_binaric1
+Boruta(REF~.,ref_binaric1, ntree = 100, maxRuns = 30) %>% 
+  TentativeRoughFix() -> boruta_trained1
+
+boruta_trained1 %>% 
+  attStats() %>% 
+  rownames_to_column("Переменная") %>% 
+  ggplot(aes(y = Переменная, x = meanImp, color = decision)) +
+  geom_point() +
+  geom_errorbar(aes(xmin = minImp, xmax = maxImp, width = 0.1)) +
+  xlab('Среднее значение энтропии') +
+  labs(color = 'Значимость переменной') +
+  scale_color_discrete(labels = c('Подтвержденная','Неподтвержденная'))
+```
+

@@ -1,0 +1,115 @@
+---
+title: "Untitled"
+author: "Ivan Lebedev"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r}
+library(survival)
+library(cmprsk)
+library(tidycmprsk)
+library(ggsurvfit)
+```
+
+
+```{r setup, include=FALSE}
+rs <- 
+  fnet$RS_20230119_120304 %>% 
+  select(-SITE,-SUBJID) 
+nrow(rs)
+str(rs)
+
+hd <- fnet$GVHD_20230119_120304 %>%
+  filter(GVHDYN == "yes") %>% 
+  filter(!GVHDCAT == "Cross syndrome")
+nrow(hd)
+str(hd)
+
+df_surv <- hd %>% 
+  bind_cols(rs) %>% 
+  rename("TRIND" = GVHDCAT) %>% 
+  select(-SITE,-GVHDDTC,-GVHDAGE,-GVHDMETH)
+
+common_df_disease_surv <- 
+  common_df_disease %>% 
+  filter(!TRIND == "cross syndrome") %>% 
+  arrange(SUBJID)
+nrow(common_df_disease_surv)
+
+df_surv_an <- common_df_disease_surv %>% 
+  bind_cols(df_surv)
+
+df_surv_an <- df_surv_an %>% 
+  mutate(
+  TDINTER = (as.Date(GVHDDTC,        ## От пересадки до РТПХ
+                     format = "%d.%m.%Y") - as.Date(TRDTC, 
+                                                    format = "%d.%m.%Y")) %>% 
+    as.character %>%
+    as.numeric,
+  DINTER = (as.Date(DEATHDTC,        ## От пересадки до РТПХ
+                       format = "%d.%m.%Y") - as.Date(TRDTC, 
+                                                      format = "%d.%m.%Y")) %>% 
+    as.character %>%
+    as.numeric,
+  LINTER = (as.Date(LCDTC,        ## От пересадки до РТПХ
+                       format = "%d.%m.%Y") - as.Date(TRDTC, 
+                                                      format = "%d.%m.%Y")) %>% 
+    as.character%>%
+    as.numeric,
+  RElINTER = (as.Date(RELAPDTC,        ## От пересадки до РТПХ
+                    format = "%d.%m.%Y") - as.Date(TRDTC, 
+                                                   format = "%d.%m.%Y")) %>% 
+    as.character%>%
+    as.numeric)
+```
+
+
+```{r}
+df_surv_an <- df_surv_an %>% 
+  mutate(RELAPYN = ifelse(
+  RELAPYN == "yes", 1, 0)) %>% 
+  mutate(ALIVE = case_when(
+    ALIVE == "alive" ~ 0, 
+    ALIVE == "died" ~ 1,
+    ALIVE == "unknown" ~ NA)) %>% 
+  unite("futime",LINTER,DINTER, na.rm = T) %>% 
+  mutate(etime= ifelse(
+    RELAPYN == 0, futime, RElINTER) %>% as.numeric) %>%
+  mutate(event = ifelse(
+    RELAPYN == 0, 2*ALIVE, 1)) %>%
+  mutate(event = factor(event, 0:2, labels=c("censor", "rel", "death")))
+
+table(df_surv_an$event)
+```
+
+```{r}
+df_surv_an_1 <- 
+  df_surv_an %>% 
+  filter(`TRIND...46` == "acute GVHD") %>% 
+  mutate(REF = 
+           case_when(REFSTYN == "yes" ~ "yes", 
+                     REFSTYN == "no" ~ "no",
+                     REFSTYN == "stated subjectively" ~ NA,
+                     REFSTYN == "impossible to state" ~ NA)) %>% 
+  select(SUBJID...2,SEX,TRNUM,ALIVE,RELAPYN,GVHDAGE, futime, etime, event, REF,TRIND...48)
+
+table(df_surv_an_1$event)
+```
+
+```{r}
+crr(Surv(etime, event) ~ ., data=df_surv_an_1)
+```
+
+
+```{r}
+cuminc(Surv(etime, event) ~ REF, data=df_surv_an_1) %>% 
+  ggcuminc() + 
+  labs(
+    x = "Days"
+  ) + 
+  add_confidence_interval() +
+  add_risktable()
+```
+
+

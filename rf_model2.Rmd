@@ -1,0 +1,293 @@
+---
+title: "Untitled"
+author: "Ivan Lebedev"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(tidymodels)
+library(embed)
+library(themis)
+library(car)
+library(psych)
+library(vip)
+library(Boruta)
+library(doParallel)
+```
+
+```{r}
+df_ref_an <- df_surv_an %>% 
+  rename("TRIND" = "TRIND...46", "SUBJID" = "SUBJID...2") %>% 
+  select(-BIRTHDTC, -PSOCN, -PRSCHEM, -GVHDMETH, -AGVHDOCC, -CGVHDOCC, -PTSTAT,	-SEVTYPE, -contains("chronic_"), -contains("acute_"), -SUBJID...47, -TRIND...48, -GVHDYN, -GVHDOTHM, -REFSTLOT, -event, -futime, -TDINTER, -RElINTER, -etime, -COND) %>% 
+  mutate(SEVGRADE = case_when(
+   SEVGRADE == "severe" ~ 3, 
+   SEVGRADE == "moderate" ~ 2,
+   SEVGRADE == "mild" ~ 1,
+   SEVGRADE == NA ~ NA)) %>% 
+  unite("GVHDGRADE",SEVGRADE,AGVHDGR, na.rm = T)
+
+CM <- fnet$CM_20230119_120304 %>% 
+  mutate(ATCN = case_when(ATCN == "GLUCOCORTICOIDS" ~ "steroids", 
+                          ATCN == "CORTICOSTEROIDS, POTENT (GROUP III)" ~ "steroids",
+                          ATCN == "CORTICOSTEROIDS FOR SYSTEMIC USE" ~ "steroids",
+                          ATCN == "CORTICOSTEROIDS, DERMATOLOGICAL PREPARATIONS" ~ "steroids",
+                          ATCN == "JANUS-ASSOCIATED KINASE (JAK) INHIBITORS" ~ "jak",
+                          ATCN == "CALCINEURIN INHIBITORS" ~ "calin",
+                          ATCN == "OTHER IMMUNOSUPPRESSANTS" ~ "other",
+                          ATCN == "INTERLEUKIN INHIBITORS" ~ "other",
+                          ATCN == "SELECTIVE IMMUNOSUPPRESSANTS" ~ "other",
+                          ATCN == "BRUTON'S TYROSINE KINASE (BTK) INHIBITORS" ~ "other",
+                          ATCN == "BCR-ABL TYROSINE KINASE INHIBITORS" ~ "other",
+                          ATCN == "TUMOR NECROSIS FACTOR ALPHA (TNF-) INHIBITORS" ~ "other",
+                          ATCN == "INTERLEUKINS" ~ "other",
+                          ATCN == "IMIDAZOLE DERIVATIVES" ~ "other",
+                          ATCN == "NA" ~ NA)) %>% 
+  select(ATCN, SUBJID, LOT, TRIND, TRSTDTC, TRENDTC)
+
+ref_binaric <- 
+  left_join(df_ref_an, 
+            CM,
+            by = c("SUBJID", "TRIND")) %>% 
+  distinct(SUBJID, .keep_all = TRUE) %>% 
+  mutate(
+    across(c(TRSTDTC, TRENDTC, REFSTDTC), ~ format(as.Date(.x, format = "%d/%m/%Y"), "%d.%m.%Y")),
+    across(c(ATCN, LOT), ~as.factor(.x))) %>%
+  mutate(До_проф = (as.Date(PRSTDTC, format = "%d.%m.%Y") - as.Date(TRDTC, format = "%d.%m.%Y")) %>% 
+           as.character %>% 
+           as.numeric,
+         Пер_леч = (as.Date(TRENDTC, format = "%d.%m.%Y") - as.Date(TRSTDTC, format = "%d.%m.%Y")) %>%
+           as.character %>% 
+           as.numeric
+         ) %>% 
+  mutate(REF = case_when(
+    REFSTYN == "yes" ~ "1", 
+    REFSTYN == "no" ~ "0",
+    REFSTYN == "stated subjectively" ~ NA,
+    REFSTYN == "impossible to state" ~ NA),
+    across(c(REF, RELAPYN), ~as.factor(.x))) %>% 
+  select(-SUBJID, -SITE, -PRSTDTC, -PRENDTC, -TRDTC, -LCDTC, -DEATHDTC, -RELAPDTC, -GVHDDTC, -REFSTDTC, -TRSTDTC, -TRENDTC, -ALIVE, -REFSTYN, -LOT) %>% 
+  mutate(PTN =  ifelse(PTN == "ACUTE LYMPHOCYTIC LEUKAEMIA",
+                       "ACUTE LYMPHOCYTIC LEUKAEMIA", 
+                       ifelse(PTN == "ACUTE MYELOID LEUKAEMIA", 
+                              "ACUTE MYELOID LEUKAEMIA",
+                              "OTHER"))) %>% 
+  mutate(HATGDOSE =  ifelse(HATGDOSE == "0",
+                       "0", "1"),
+         TIMGDOSE = ifelse(TIMGDOSE == "0",
+                           "0", "1")) %>% 
+  mutate(TRNUM = ifelse(TRNUM == "1",
+                           "1", "2+"),
+         across(c(PTN, TIMGDOSE, HATGDOSE, TRNUM, GVHDGRADE), ~as.factor(.x))) %>%
+  filter(REF != "NA") %>% 
+  select(-До_проф, -Пер_леч)
+```
+
+```{r}
+ref_binaric %>% glimpse()
+ref_binaric %>% count(REF)
+ref_binaric %>% tbl_summary(by = REF)
+ref_binaric %>% 
+  select(where(is.factor)) %>% 
+  map(function(x) sum(is.na(x))/length(x))
+ref_binaric %>% 
+  select(where(is.factor)) %>% 
+  map(table)
+```
+
+```{r}
+ref_binaric<- ref_binaric[sample(nrow(ref_binaric)), ]
+split_train_test2 <- initial_split(ref_binaric, strata=REF, prop =0.8)
+ref_train2 <- split_train_test2 %>% training()
+ref_test2 <- split_train_test2 %>% testing()
+```
+
+```{r}
+cat_metric2 <- yardstick::metric_set(
+  yardstick::bal_accuracy,
+  yardstick::precision,
+  yardstick::recall,
+  yardstick::f_meas,
+  yardstick::specificity,
+  yardstick::sensitivity,
+  yardstick::j_index
+)
+```
+
+```{r}
+ref_recipe2 <- 
+  recipe(REF~., ref_train2) %>% 
+  step_zv(all_predictors()) %>% 
+  step_nzv(all_predictors()) %>% 
+  step_normalize(all_numeric_predictors()) %>% 
+  step_impute_mode(all_nominal_predictors()) %>% 
+  step_dummy(all_nominal(), -all_outcomes()) %>%
+  step_downsample(REF) %>% 
+  prep()
+
+ref_recipe2 %>% juice() %>% count(REF)
+```
+
+```{r}
+rf_model <- rand_forest(
+  mtry = tune(),
+  trees = 10000,
+  min_n = tune()) %>%
+  set_mode("classification") %>%
+  set_engine("ranger")
+```
+
+```{r}
+cv_samples2 <- vfold_cv(ref_train2, strata = REF, v = 10)
+```
+
+```{r}
+reg_workflow2 <- workflow() %>% 
+  add_recipe(ref_recipe2) %>% 
+  add_model(rf_model)
+```
+
+```{r}
+doParallel::registerDoParallel()
+
+set.seed(345)
+tune_res <- tune_grid(
+  reg_workflow2,
+  resamples = cv_samples2,
+  grid = 20
+)
+
+tune_res
+```
+
+```{r}
+tune_res %>%
+  collect_metrics() %>%
+  filter(.metric == "roc_auc") %>%
+  select(mean, min_n, mtry) %>%
+  pivot_longer(min_n:mtry,
+    values_to = "value",
+    names_to = "parameter") %>%
+  ggplot(aes(value, mean, color = parameter)) +
+  geom_point(show.legend = FALSE) +
+  facet_wrap(~parameter, scales = "free_x") +
+  labs(x = NULL, y = "AUC")
+```
+
+```{r}
+rf_grid <- grid_regular(
+  mtry(range = c(15, 50)),
+  min_n(range = c(30, 40)),
+  levels = 5
+)
+
+rf_grid
+```
+
+```{r}
+set.seed(456)
+regular_res <- tune_grid(
+  reg_workflow2,
+  resamples = cv_samples2,
+  grid = rf_grid
+)
+
+regular_res
+```
+
+```{r}
+regular_res %>%
+  collect_metrics() %>%
+  filter(.metric == "roc_auc") %>%
+  mutate(min_n = factor(min_n)) %>%
+  ggplot(aes(mtry, mean, color = min_n)) +
+  geom_line(alpha = 0.5, size = 1.5) +
+  geom_point() +
+  labs(y = "AUC")
+```
+
+```{r}
+best_auc <- select_best(regular_res, "roc_auc")
+
+final_rf <- finalize_model(
+  rf_model,
+  best_auc
+)
+
+final_rf
+```
+
+```{r}
+final_model <- finalize_workflow(
+  reg_workflow2,
+  best_auc
+)
+```
+
+
+```{r}
+final_rf %>%
+  set_engine("ranger", importance = "permutation") %>%
+  fit(REF ~ .,
+    data = juice(ref_recipe2)) %>%
+  vip(geom = "point")
+```
+
+```{r}
+final_model %>% 
+  fit(ref_train2) %>% 
+  predict(ref_test2) %>% 
+  pull() -> final_test_prediction
+
+metrics_on_test2 <- cat_metric2(truth = truth_values, estimate = estimate_values, data = tibble(truth_values = ref_test2$REF, estimate_values = final_test_prediction)) %>% 
+  rename(test_estimate = `.estimate`) %>% 
+  select(!`.estimator`)
+
+final_model %>% 
+  fit(ref_train2) %>% 
+  predict(ref_train2) %>% 
+  pull() -> final_train_prediction
+
+metrics_on_train2 <- cat_metric2(truth = truth_values, estimate = estimate_values, data = tibble(truth_values = ref_train1$REF, estimate_values = final_train_prediction)) %>% 
+  rename(train_estimate = `.estimate`) %>% 
+  select(!`.estimator`)
+
+metrics_on_test2 %>% 
+  left_join(metrics_on_train2, by = ".metric") %>% 
+  mutate(
+    differencies = train_estimate - test_estimate 
+  )
+```
+
+```{r}
+final_wf <- workflow() %>%
+  add_recipe(ref_recipe2) %>%
+  add_model(final_rf)
+
+final_res <- final_wf %>%
+  last_fit(split_train_test2)
+
+final_res %>%
+  collect_metrics()
+
+final_res %>% 
+  extract_workflow() %>% 
+  predict(ref_binaric, type ="class") %>% 
+  pull() -> class_prediction2
+
+final_res %>% 
+  extract_workflow() %>% 
+  predict(ref_binaric, type ="prob") %>% 
+  pull() -> prob_prediction2
+
+rf_results1 <- tibble(truth = ref_binaric$REF,
+                            estimate = class_prediction2,
+                            prob_yes = 1 - prob_prediction2)
+
+rf_results1 %>% 
+  roc_curve(truth = truth, prob_yes) %>% 
+  autoplot()
+```
+
