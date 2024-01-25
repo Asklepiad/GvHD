@@ -135,11 +135,29 @@ common_df_patient <- common_df_patient %>%
 Добавим информацию про острую, хроническую и оверлап РТПХ
 
 ```{r}
-## Объединим с уже имеющимися данными
+## Объединим с уже имеющимися данными и данными о резистентности
 
-common_df_disease <-   left_join(common_df_patient,
+common_df_disease <-   left_join(left_join(common_df_patient,
                        fgvhd %>% select(!SITE),
+                       by="SUBJID"), fnet$RS_20230119_120304 %>% select(!SITE),
                        by="SUBJID")
+common_df_disease <- common_df_disease %>% mutate(  # Убираем дубликаты записей о резистентности
+    TRIND = case_when(                     # Эта переменная нужна для последующего объединения с терапией
+     `Acute GVHD` == "yes" ~ "acute GVHD",
+     `Chronic GVHD` == "yes" ~ "chronic GVHD",
+     `Cross syndrome` == "yes" ~ "cross syndrome"
+    ) %>% factor(levels = c("acute GVHD", "cross syndrome", "chronic GVHD")),
+  RESDIFFDTC = as.Date(REFSTDTC, format = "%d/%m/%Y") - as.Date(GVHDDTC, format = "%d/%m/%Y")
+) %>% 
+  filter(RESDIFFDTC>0 | is.na(RESDIFFDTC)) %>% 
+  mutate(MREFDTC = mean(RESDIFFDTC, na.rm=TRUE), .by=SUBJID) %>% 
+  filter(RESDIFFDTC <= MREFDTC | is.na(RESDIFFDTC)) %>%  
+  dplyr::group_by(SUBJID, TRIND) %>%  
+  arrange(RESDIFFDTC) %>% 
+  slice(1) %>% 
+  ungroup() %>% 
+  select(-c(MREFDTC, RESDIFFDTC))
+
 
 ## Разобьем на 3 датасета: острую, хроническую РТПХ и оверлап-синдром
 
@@ -160,17 +178,12 @@ common_df_disease <- full_join(full_join(common_df_disease_acute,
 
 ```
 
+
 Преобразуем типы переменных.
 
 ```{r}
 ## Добавим префикс acute и chronic к пораженным органам
 common_df_disease <- common_df_disease %>% 
-  mutate(
-    TRIND = case_when(                     # Эта переменная нужна для последующего объединения с терапией
-     `Acute GVHD` == "yes" ~ "acute GVHD",
-     `Chronic GVHD` == "yes" ~ "chronic GVHD",
-     `Cross syndrome` == "yes" ~ "cross syndrome"
-    ) %>% as.factor()) %>% 
   mutate(
     across(c(AGVHDOCC,AGVHDGR,acute_Skin,acute_Liver,
              `acute_Upper gastrointestinal tract`,
@@ -225,8 +238,8 @@ common_df_disease <- common_df_disease %>%
   select(-c(CONDOTH, Acute_GVHD, Chronic_GVHD, 
             Cross_syndrome, SCHEMOTH)) 
 
-common_df_disease <- common_df_disease %>%
-  filter(TPINTER>=3 & TPINTER < 5)   # Удаляем людей, у которых профилактика началась ранее чем на 3-й день после трансплантации, и позднее, чем на 5-й.
+# common_df_disease <- common_df_disease %>%
+#   filter(TPINTER>=3 & TPINTER < 5)   # Удаляем людей, у которых профилактика началась ранее чем на 3-й день после трансплантации, и позднее, чем на 5-й.
 ```
 
 Для нашего текущего датафрейма единица наблюдения -- наличие одного из типов РТПХ у одного пациента.
@@ -243,6 +256,7 @@ common_df_disease_chronic <- common_df_disease %>%
 common_df_disease_cross <- common_df_disease %>% 
   filter(TRIND == "cross syndrome")
 ```
+
 
 
 
@@ -268,10 +282,14 @@ common_df_treatment <- left_join(common_df_disease,
                                                         "CORTICOSTEROIDS, POTENT (GROUP III)", 
                                                         "CORTICOSTEROIDS FOR SYSTEMIC USE"), 
                                                         "no resistance", "no data")) %>% as.factor(),   # Новая колонка с данными о резистентности к стероидам
-    across(c(GVHDTRYN,TRONG), ~ case_when(
-      is.na(.x) ~ "no",
-      .x == "yes" ~ "yes"
-    ))
+    GVHDTRYN = case_when(
+      GVHDTRYN == "no" ~ "no",
+      is.na(GVHDTRYN) ~ "yes",
+      GVHDTRYN == "yes" ~ "yes"),
+    TRONG = case_when(
+      is.na(TRONG) ~ "no",
+      TRONG == "yes" ~ "yes"
+    )
   ) %>% 
     select(-c(REPDRUG, DRUGC, ATCC, INGR, ATCN))  ### Уберем колонки с дублирующейся и второстепенной информацией
 ```
@@ -312,9 +330,16 @@ common_df_treatment_cross <- common_df_treatment %>%
   filter(TRIND == "cross syndrome")
 ```
 
+
+Записываем данные
+
 ```{r}
-write_csv(common_df_treatment_acute, "acute_dataset.csv")
-write_csv(common_df_treatment_chronic, "chronic_dataset.csv")
+write_csv(common_df_treatment_acute, "acute_t_dataset.csv")
+write_csv(common_df_treatment_chronic, "chronic_t_dataset.csv")
+write_csv(common_df_disease_acute, "acute_d_dataset.csv")
+write_csv(common_df_treatment_chronic, "chronic_d_dataset.csv")
+write_csv(common_df_treatment, "t_dataset.csv")
+write_csv(common_df_disease, "d_dataset.csv")
 ```
 
 
@@ -327,6 +352,144 @@ str(common_df_treatment)
 ```{r}
 summary(common_df_treatment)
 ```
+
+```{r fig.width=15, fig.height=8}
+common_df_patient$TRDTC <- as.Date(common_df_patient$TRDTC, format="%d.%m.%Y")
+
+common_df_patient %>% arrange(TRDTC)
+
+ggplot(common_df_patient)+
+  geom_histogram(aes(x = TRDTC), bins = ceiling(log2(nrow(common_df_patient)) + 1), fill = "green", color = "black")+
+  labs(x = "Дата пересадки",
+       y = "Количество пересадок",
+       title = "Рис. 1 Распределение числа пересадок костного мозга\nза время наблюдения")+
+  theme_bw()+
+  theme(axis.text.x = element_text(size=20),
+      axis.text.y = element_text(size=20),
+      axis.title.x = element_text(size=25),
+      axis.title.y = element_text(size=25),
+      plot.title = element_text(size=32, hjust=0.5))
+```
+
+
+```{r fig.width=15, fig.height=8}
+common_df_treatment %>% 
+  filter(GVHDTRYN == "yes") %>%
+  filter(ATCNA =="GCS") %>%
+  # .$STERRES %>% unique
+  # filter(STERRES %in% c("resistance", "no resistance")) %>%
+  # select(STERRES, SUBJID, DRUGN, TRRESP)
+  .$SUBJID %>% unique %>% length
+
+common_df_treatment$ATCNA %>% unique
+
+# common_df_treatment %>% 
+# select(SUBJID, STERRES) %>%
+#   distinct %>% pull(STERRES) %>% table
+#   ggplot()+
+#   geom_histogram(aes(x = GVHDAGE), bins = ceiling(log2(nrow(common_df_treatment)) + 1), fill = "green", color = "black")+
+#   labs(x = "Возраст пациента",
+#        y = "Количество пациентов",
+#        title = "Рис. 2 Распределение возраста пациентов")+
+#   theme_bw()+
+#   theme(axis.text.x = element_text(size=20),
+#       axis.text.y = element_text(size=20),
+#       axis.title.x = element_text(size=25),
+#       axis.title.y = element_text(size=25),
+#       plot.title = element_text(size=32, hjust=0.5))
+#   
+# common_df_disease %>% 
+#   GVHDAGE
+  
+```
+
+
+
+# Альтернативный расчет на смешанной популяции
+
+```{r}
+common_df_disease_new <- common_df_disease %>% 
+  arrange(desc(TRIND), SUBJID)
+
+common_df_disease_new <- common_df_disease_new[!duplicated(common_df_disease_new$SUBJID),] 
+
+common_df_disease_acute_new <- common_df_disease_new %>% 
+  filter(TRIND == "acute GVHD")
+
+common_df_disease_chronic_new <- common_df_disease_new %>% 
+  filter(TRIND == "chronic GVHD")
+
+common_df_disease_cross_new <- common_df_disease_new %>% 
+  filter(TRIND == "cross syndrome")
+```
+
+
+```{r}
+common_df_treatment_new <- left_join(common_df_disease_new,
+          fnet$CM_20230119_120304 %>% select(!SITE),
+          by = c("SUBJID", "TRIND")) %>% 
+  mutate(
+    across(c(TRSTDTC, TRENDTC), ~ format(as.Date(.x, format = "%d/%m/%Y"), "%d.%m.%Y")),
+    across(c(GVHDTRYN, DRUGN, ATCN, LOT, TRONG, TRRESP, RESPEV), ~as.factor(.x)),
+    ATCNA = case_when(
+    str_detect(ATCN, "CORTIC", negate = FALSE) ~ "GCS",
+    str_detect(ATCN, "JAK", negate = FALSE) ~ "JAKi",
+    str_detect(ATCN, "CALCINEURIN", negate = FALSE) ~ "CALi",
+    is.na(ATCN) ~ NA,
+    TRUE ~ "Other") %>% as.factor,
+    STERRES = if_else(TRRESP %in% c("no response", 
+                                   "progression") & ATCN %in% c("GLUCOCORTICOIDS",
+                                                                "CORTICOSTEROIDS, POTENT (GROUP III)", 
+                                                                "CORTICOSTEROIDS FOR SYSTEMIC USE"), "resistance", if_else((TRRESP != "no data" | TRRESP != "not estimated") & ATCN %in% c("GLUCOCORTICOIDS",
+                                                        "CORTICOSTEROIDS, POTENT (GROUP III)", 
+                                                        "CORTICOSTEROIDS FOR SYSTEMIC USE"), 
+                                                        "no resistance", "no data")) %>% as.factor(),   # Новая колонка с данными о резистентности к стероидам
+    GVHDTRYN = case_when(
+      GVHDTRYN == "no" ~ "no",
+      is.na(GVHDTRYN) ~ "yes",
+      GVHDTRYN == "yes" ~ "yes"),
+    TRONG = case_when(
+      is.na(TRONG) ~ "no",
+      TRONG == "yes" ~ "yes"
+    )
+  ) %>% 
+    select(-c(REPDRUG, DRUGC, ATCC, INGR, ATCN))  ### Уберем колонки с дублирующейся и второстепенной информацией
+```
+
+Добавим новые переменные: длительность профилактики, длительность лечения, интервал от пересадки КМ до установления диагноза РТПХ, интервал от пересадки КМ до начала профилактики, интервал от конца профилактики до начала лечения.
+
+```{r}
+#View(common_df_treatment_chronic)
+common_df_treatment_new <- common_df_treatment_new %>% 
+  mutate(
+    PTINTER = (as.Date(PRENDTC,        ## От конца профилатики до начала лечения
+                format = "%d.%m.%Y") - as.Date(TRSTDTC, 
+                                               format = "%d.%m.%Y")) %>% as.character %>% as.numeric,
+    
+    TRINTER = if_else(is.na(TRENDTC), (as.Date(LCDTC,        ## Лечение
+                format = "%d.%m.%Y") - as.Date(TRSTDTC, 
+                                               format = "%d.%m.%Y")) %>% as.character %>% as.numeric, (as.Date(TRENDTC, 
+                format = "%d.%m.%Y") - as.Date(TRSTDTC, 
+                                               format = "%d.%m.%Y")) %>% as.character %>% as.numeric)
+  )
+
+
+```
+
+
+Разобьем полученные данные на три блока по типу заболевания (опять)
+
+```{r}
+common_df_treatment_acute_new <- common_df_treatment_new %>% 
+  filter(TRIND == "acute GVHD")
+
+common_df_treatment_chronic_new <- common_df_treatment_new %>% 
+  filter(TRIND == "chronic GVHD")
+
+common_df_treatment_cross_new <- common_df_treatment_new %>% 
+  filter(TRIND == "cross syndrome")
+```
+
 
 # EDA
 
@@ -628,6 +791,8 @@ bar_dodge <- function(df, variable1, variable2){
   return(picture)
 }
 
+map(common_df_disease_chronic %>% 
+         select(PTSTAT, SEVGRADE) %>% colnames, \(x) bar_dodge(common_df_disease_chronic %>% filter(ALIVE!="unknown"), x, ALIVE))
 
 # Подумать насчет аналога каунтов для процентов
 
@@ -635,6 +800,162 @@ bar_dodge <- function(df, variable1, variable2){
 
 ```
 
+
+```{r fig.width=16, fig.height=10}
+common_df_disease_acute %>% 
+  filter(ALIVE %in% c("alive", "died")) %>% 
+ggplot()+
+  geom_bar(aes(x = RELAPYN, fill = ALIVE), position="fill")+
+  scale_x_discrete(name = "Наличие рецидива", labels = c("Нет рецидива", "Нет данных", "Рецидив"))+
+  scale_fill_discrete(name = "Выжил ли пациент", labels = c("Выжил", "Не выжил"))+
+  labs(y = "Доля",
+       title = "Доля выживших больных острой формой РТПХ\nв зависимости от факта наличия рецидива")+
+    theme_bw()+
+    theme(axis.text.x = element_text(size=30),
+          axis.text.y = element_text(size=30),
+          axis.title.x = element_text(size=35),
+          axis.title.y = element_text(size=35),
+          plot.title = element_text(size=42, hjust=0.2),
+          legend.title = element_text(size=30),
+          legend.text = element_text(size=30))
+
+common_df_disease_chronic %>% 
+  filter(ALIVE %in% c("alive", "died")) %>% 
+ggplot()+
+  geom_bar(aes(x = RELAPYN, fill = ALIVE), position="fill")+
+  scale_x_discrete(name = "Наличие рецидива", labels = c("Нет рецидива", "Нет данных", "Рецидив"))+
+  scale_fill_discrete(name = "Выжил ли пациент", labels = c("Выжил", "Не выжил"))+
+  labs(y = "Доля",
+       title = "Доля выживших больных хронической формой РТПХ\nв зависимости от факта наличия рецидива")+
+    theme_bw()+
+    theme(axis.text.x = element_text(size=30),
+          axis.text.y = element_text(size=30),
+          axis.title.x = element_text(size=35),
+          axis.title.y = element_text(size=35),
+          plot.title = element_text(size=42, hjust=0.2),
+          legend.title = element_text(size=30),
+          legend.text = element_text(size=30))
+
+common_df_disease_acute %>% 
+  filter(ALIVE %in% c("alive", "died")) %>% 
+ggplot()+
+  geom_bar(aes(x = TRTYPE, fill = ALIVE), position="fill")+
+  scale_x_discrete(name = "Тип донора")+
+  scale_fill_discrete(name = "Выжил ли пациент", labels = c("Выжил", "Не выжил"))+
+  labs(y = "Доля",
+       title = "Доля выживших больных острой формой РТПХ\nв зависимости от типа донора")+
+    theme_bw()+
+    theme(axis.text.x = element_text(size=30),
+          axis.text.y = element_text(size=30),
+          axis.title.x = element_text(size=35),
+          axis.title.y = element_text(size=35),
+          plot.title = element_text(size=42, hjust=0.2),
+          legend.title = element_text(size=30),
+          legend.text = element_text(size=30))
+
+common_df_disease_chronic %>% 
+  filter(ALIVE %in% c("alive", "died")) %>% 
+ggplot()+
+  geom_bar(aes(x = TRTYPE, fill = ALIVE), position="fill")+
+  scale_x_discrete(name = "Тип донора")+
+  scale_fill_discrete(name = "Выжил ли пациент", labels = c("Выжил", "Не выжил"))+
+  labs(y = "Доля",
+       title = "Доля выживших больных хронической формой РТПХ\nв зависимости от типа донора")+
+    theme_bw()+
+    theme(axis.text.x = element_text(size=30),
+          axis.text.y = element_text(size=30),
+          axis.title.x = element_text(size=35),
+          axis.title.y = element_text(size=35),
+          plot.title = element_text(size=42, hjust=0.2),
+          legend.title = element_text(size=30),
+          legend.text = element_text(size=30))
+
+common_df_disease_acute %>% 
+  filter(ALIVE %in% c("alive", "died")) %>% 
+ggplot()+
+  geom_bar(aes(x = AGVHDGR, fill = ALIVE), position="fill")+
+  scale_x_discrete(name = "Тяжесть состояния в момент\nпостановки диагноза")+
+  scale_fill_discrete(name = "Выжил ли пациент", labels = c("Выжил", "Не выжил"))+
+  labs(y = "Доля",
+       title = "Доля выживших больных острой формой РТПХ\nв зависимости от тяжести исходного состояния")+
+    theme_bw()+
+    theme(axis.text.x = element_text(size=30),
+          axis.text.y = element_text(size=30),
+          axis.title.x = element_text(size=35),
+          axis.title.y = element_text(size=35),
+          plot.title = element_text(size=42, hjust=0.2),
+          legend.title = element_text(size=30),
+          legend.text = element_text(size=30))
+
+common_df_disease_chronic %>% 
+  filter(ALIVE %in% c("alive", "died")) %>% 
+ggplot()+
+  geom_bar(aes(x = PTSTAT, fill = ALIVE), position="fill")+
+  scale_x_discrete(name = "Тяжесть состояния в момент\nпостановки диагноза",)+
+  scale_fill_discrete(name = "Выжил ли пациент", labels = c("Выжил", "Не выжил"))+
+  labs(y = "Доля",
+       title = "Доля выживших больных хронической формой РТПХ\nв зависимости от тяжести исходного состояния")+
+    theme_bw()+
+    theme(axis.text.x = element_text(size=30),
+          axis.text.y = element_text(size=30),
+          axis.title.x = element_text(size=35),
+          axis.title.y = element_text(size=35),
+          plot.title = element_text(size=42, hjust=0.2),
+          legend.title = element_text(size=30),
+          legend.text = element_text(size=30))
+
+common_df_disease_chronic %>% 
+  filter(ALIVE %in% c("alive", "died")) %>% 
+ggplot()+
+  geom_bar(aes(x = chronic_GT, fill = ALIVE), position="fill")+
+  scale_x_discrete(name = "Степень тяжести поражения ЖКТ\nв момент постановки диагноза")+
+  scale_fill_discrete(name = "Выжил ли пациент", labels = c("Выжил", "Не выжил"))+
+  labs(y = "Доля",
+       title = "Доля выживших больных хронической формой РТПХ\nв зависимости от тяжести поражения ЖКТ")+
+    theme_bw()+
+    theme(axis.text.x = element_text(size=30),
+          axis.text.y = element_text(size=30),
+          axis.title.x = element_text(size=35),
+          axis.title.y = element_text(size=35),
+          plot.title = element_text(size=42, hjust=0.2),
+          legend.title = element_text(size=30),
+          legend.text = element_text(size=30))
+
+common_df_treatment_acute %>% 
+  filter(STERRES %in% c("resistance", "no resistance"),
+         ALIVE %in% c("alive", "died")) %>% 
+ggplot()+
+  geom_bar(aes(x = ALIVE, fill = STERRES), position="fill")+
+  scale_x_discrete(name = "Выжил ли пациент")+
+  scale_fill_discrete(name = "Факт развития резистентности", labels = c("Нет резистентности", "Есть резистентность"))+
+  labs(y = "Доля",
+       title = "Доля пациентов с развивишейся резистентностью к ГКС\nв подгруппах выживыших и невыживших пациентов")+
+    theme_bw()+
+    theme(axis.text.x = element_text(size=30),
+          axis.text.y = element_text(size=30),
+          axis.title.x = element_text(size=35),
+          axis.title.y = element_text(size=35),
+          plot.title = element_text(size=42, hjust=0.2),
+          legend.title = element_text(size=30),
+          legend.text = element_text(size=30))
+
+common_df_treatment_acute %>% 
+  filter(STERRES %in% c("resistance", "no resistance")) %>% 
+ggplot()+
+  geom_bar(aes(x = AGVHDGR, fill = STERRES), position="fill")+
+  scale_x_discrete(name = "Степень тяжести состояния пациента\nв момент постановки даигноза")+
+  scale_fill_discrete(name = "Факт развития резистентности", labels = c("Нет резистентности", "Есть резистентность"))+
+  labs(y = "Доля",
+       title = "Доля пациентов с развивишейся резистентностью к ГКС\nв зависимости от состояния пациента")+
+    theme_bw()+
+    theme(axis.text.x = element_text(size=30),
+          axis.text.y = element_text(size=30),
+          axis.title.x = element_text(size=35),
+          axis.title.y = element_text(size=35),
+          plot.title = element_text(size=42, hjust=0.2),
+          legend.title = element_text(size=30),
+          legend.text = element_text(size=30))
+```
 
 ```{r fig.height=8, fig.width=12}
 print("Барплоты по пациентам")
