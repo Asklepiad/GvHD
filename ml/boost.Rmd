@@ -1,0 +1,236 @@
+---
+title: "boost"
+author: "Ivan Lebedev"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(tidymodels)
+library(embed)
+library(themis)
+library(car)
+library(psych)
+library(vip)
+library(Boruta)
+library(doParallel)
+library(xgboost)
+```
+
+```{r}
+df_ref_an <- df_surv_an %>% 
+  select(-SEVGRADE,	-SEVTYPE, -contains("chronic_"), -contains("acute_"), -event, -etime, -futime)
+
+CM <- fnet$CM_20230119_120304 %>% 
+  mutate(ATCN = case_when(ATCN == "GLUCOCORTICOIDS" ~ "steroids", 
+                          ATCN == "CORTICOSTEROIDS, POTENT (GROUP III)" ~ "steroids",
+                          ATCN == "CORTICOSTEROIDS FOR SYSTEMIC USE" ~ "steroids",
+                          ATCN == "CORTICOSTEROIDS, DERMATOLOGICAL PREPARATIONS" ~ "steroids",
+                          ATCN == "JANUS-ASSOCIATED KINASE (JAK) INHIBITORS" ~ "jak",
+                          ATCN == "CALCINEURIN INHIBITORS" ~ "calin",
+                          ATCN == "OTHER IMMUNOSUPPRESSANTS" ~ "other",
+                          ATCN == "INTERLEUKIN INHIBITORS" ~ "other",
+                          ATCN == "SELECTIVE IMMUNOSUPPRESSANTS" ~ "other",
+                          ATCN == "BRUTON'S TYROSINE KINASE (BTK) INHIBITORS" ~ "other",
+                          ATCN == "BCR-ABL TYROSINE KINASE INHIBITORS" ~ "other",
+                          ATCN == "TUMOR NECROSIS FACTOR ALPHA (TNF-) INHIBITORS" ~ "other",
+                          ATCN == "INTERLEUKINS" ~ "other",
+                          ATCN == "IMIDAZOLE DERIVATIVES" ~ "other",
+                          ATCN == "NA" ~ NA)) %>% 
+  select(ATCN, SUBJID, LOT, TRIND, TRSTDTC, TRENDTC)
+
+ref_binaric <- 
+  left_join(df_ref_an, 
+            CM,
+            by = c("SUBJID", "TRIND")) %>% 
+  mutate(
+    across(c(TRSTDTC, TRENDTC, REFSTDTC), ~ format(as.Date(.x, format = "%d/%m/%Y"), "%d.%m.%Y")),
+    across(c(ATCN, LOT, TRIND), ~as.factor(.x))) %>%
+  select(-SUBJID, -SITE, -PRSTDTC, -PRENDTC, -TRDTC, -LCDTC, -DEATHDTC, -RELAPDTC, -GVHDDTC, -REFSTDTC, -TRSTDTC, -TRENDTC, -ALIVE, -LOT, -RELAPYN) %>% 
+  filter(REF != "NA") %>%
+  filter(ATCN == "steroids") %>% 
+  select(-ATCN)
+```
+
+```{r}
+ref_binaric %>% glimpse()
+```
+
+```{r}
+ref_binaric %>% count(REF)
+ref_binaric %>% tbl_summary(by = REF)
+ref_binaric %>% 
+  select(where(is.factor)) %>% 
+  map(function(x) sum(is.na(x))/length(x))
+ref_binaric %>% 
+  select(where(is.factor)) %>% 
+  map(table)
+```
+
+```{r}
+ref_binaric<- ref_binaric[sample(nrow(ref_binaric)), ]
+split_train_test <- initial_split(ref_binaric, strata = REF, prop = 0.8)
+ref_train <- split_train_test %>% training()
+ref_test <- split_train_test %>% testing()
+```
+
+```{r}
+cat_metric <- yardstick::metric_set(
+  yardstick::bal_accuracy,
+  yardstick::precision,
+  yardstick::recall,
+  yardstick::f_meas,
+  yardstick::specificity,
+  yardstick::sensitivity,
+  yardstick::j_index,
+  yardstick::roc_auc
+)
+```
+
+```{r}
+ref_recipe <- 
+  recipe(REF~., ref_train) %>% 
+  step_impute_bag(all_numeric_predictors()) %>% 
+  step_zv(all_predictors()) %>% 
+  step_nzv(all_predictors()) %>%
+  step_corr(all_numeric_predictors(), threshold = 0.7, method = "spearman") %>%
+  step_normalize(all_numeric_predictors()) %>%
+  step_lencode_bayes(all_nominal_predictors(), 
+                     outcome = vars(REF), 
+                     options = list(iter = 2000, 
+                                    chains = 1, 
+                                    adapt_delta=0.95)) %>%
+  step_downsample(REF) %>% 
+  prep()
+
+ref_recipe %>% juice() %>% count(REF)
+```
+
+```{r}
+boost_model <- boost_tree(
+  trees = tune(),
+  tree_depth = tune(), 
+  min_n = tune(),
+  loss_reduction = tune(),                  
+  sample_size = tune(), mtry = tune(),        
+  learn_rate = tune()) %>%
+  set_engine("xgboost") %>%
+  set_mode("classification")
+```
+
+```{r}
+cv_samples <- vfold_cv(ref_train, strata = REF, v = 10, repeats = 5)
+```
+
+```{r}
+parameters_grid <- grid_latin_hypercube(
+  trees(),
+  tree_depth(),
+  min_n(),
+  loss_reduction(),
+  sample_size = sample_prop(),
+  finalize(mtry(), ref_train),
+  learn_rate(),
+  size = 80)
+```
+
+```{r}
+boost_workflow <- workflow() %>% 
+  add_recipe(ref_recipe) %>% 
+  add_model(boost_model)
+```
+
+```{r}
+grid_search <- boost_workflow %>%
+  tune_grid(
+    object = boost_workflow,
+    resamples = cv_samples,
+    grid = parameters_grid,
+    control = control_grid(save_pred = TRUE),
+    metrics = metric_set(sensitivity, specificity, j_index, roc_auc))
+```
+
+```{r}
+grid_search %>%
+  collect_metrics() %>%
+  filter(.metric == "j_index") %>%
+  select(mean, mtry:sample_size) %>%
+  pivot_longer(mtry:sample_size,
+               names_to = "parameter",
+               values_to = "value") %>%
+  ggplot(aes(value, mean, color = parameter)) +
+  geom_point(show.legend = FALSE)+
+  facet_wrap(~parameter, scales = "free_x")
+```
+
+```{r}
+best_by_j_index <- grid_search %>% select_best("j_index")
+final_boost_model <- finalize_workflow(
+  boost_workflow,
+  best_by_j_index
+)
+```
+
+```{r, eval=FALSE}
+final_boost_model %>%
+  fit(data = ref_train) %>%
+  extract_fit_parsnip() %>%
+  vip(geom = "point")
+```
+
+```{r}
+# test data
+
+final_boost_model %>%
+  fit(ref_train) %>%
+  predict(ref_test) %>%
+  pull() -> final_test_prediction
+
+metrics_on_test <- cat_metric(truth = truth_values, estimate = estimate_values, tibble(truth_values = ref_test$REF, estimate_values = final_test_prediction)) %>% rename(test_estimate = `.estimate`) %>% select(!`.estimator`)
+
+# train data
+
+final_boost_model %>%
+  fit(ref_train) %>%
+  predict(ref_train) %>%
+  pull() -> final_train_prediction
+
+metrics_on_train <- cat_metric(truth = truth_values, estimate = estimate_values, tibble(truth_values = ref_train$REF, estimate_values = final_train_prediction)) %>% rename(train_estimate = `.estimate`) %>% select(!`.estimator`)
+
+# binding
+
+metrics_on_test %>%
+  left_join(metrics_on_train, by = ".metric") %>%
+  mutate(differencies = train_estimate - test_estimate)
+```
+
+## Итоговая оценка
+
+```{r}
+last_fit(
+  final_boost_model,
+  split_train_test
+) -> final_boost_model_all_data
+
+final_boost_model_all_data %>%
+  extract_workflow() %>%
+  predict(ref_binaric, type = "class") %>%
+  pull() -> class_prediction
+
+final_boost_model_all_data %>%
+  extract_workflow() %>%
+  predict(ref_binaric, type = "prob") %>%
+  pull() -> prob_prediction
+
+boost_model_results <- tibble(truth = ref_binaric$REF,
+                            estimate = class_prediction,
+                            prob_yes = 1 - prob_prediction)
+
+cat_metric(truth = truth, estimate = estimate, boost_model_results) 
+
+boost_model_results %>%
+  roc_curve(truth = truth, prob_yes) %>%
+  autoplot()
+```

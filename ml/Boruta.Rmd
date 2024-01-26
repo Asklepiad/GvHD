@@ -1,0 +1,86 @@
+---
+title: "Boruta"
+author: "Ivan Lebedev"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(tidymodels)
+library(embed)
+library(themis)
+library(car)
+library(psych)
+library(vip)
+library(Boruta)
+library(doParallel)
+```
+
+```{r}
+df_ref_an <- df_surv_an %>% 
+  select(-SEVGRADE,	-SEVTYPE, -contains("chronic_"), -contains("acute_"), -event, -etime, -futime)
+
+CM <- fnet$CM_20230119_120304 %>% 
+  mutate(ATCN = case_when(ATCN == "GLUCOCORTICOIDS" ~ "steroids", 
+                          ATCN == "CORTICOSTEROIDS, POTENT (GROUP III)" ~ "steroids",
+                          ATCN == "CORTICOSTEROIDS FOR SYSTEMIC USE" ~ "steroids",
+                          ATCN == "CORTICOSTEROIDS, DERMATOLOGICAL PREPARATIONS" ~ "steroids",
+                          ATCN == "JANUS-ASSOCIATED KINASE (JAK) INHIBITORS" ~ "jak",
+                          ATCN == "CALCINEURIN INHIBITORS" ~ "calin",
+                          ATCN == "OTHER IMMUNOSUPPRESSANTS" ~ "other",
+                          ATCN == "INTERLEUKIN INHIBITORS" ~ "other",
+                          ATCN == "SELECTIVE IMMUNOSUPPRESSANTS" ~ "other",
+                          ATCN == "BRUTON'S TYROSINE KINASE (BTK) INHIBITORS" ~ "other",
+                          ATCN == "BCR-ABL TYROSINE KINASE INHIBITORS" ~ "other",
+                          ATCN == "TUMOR NECROSIS FACTOR ALPHA (TNF-) INHIBITORS" ~ "other",
+                          ATCN == "INTERLEUKINS" ~ "other",
+                          ATCN == "IMIDAZOLE DERIVATIVES" ~ "other",
+                          ATCN == "NA" ~ NA)) %>% 
+  select(ATCN, SUBJID, LOT, TRIND, TRSTDTC, TRENDTC)
+
+ref_binaric <- 
+  left_join(df_ref_an, 
+            CM,
+            by = c("SUBJID", "TRIND")) %>% 
+  mutate(
+    across(c(TRSTDTC, TRENDTC, REFSTDTC), ~ format(as.Date(.x, format = "%d/%m/%Y"), "%d.%m.%Y")),
+    across(c(ATCN, LOT, TRIND), ~as.factor(.x))) %>%
+  select(-SUBJID, -SITE, -PRSTDTC, -PRENDTC, -TRDTC, -LCDTC, -DEATHDTC, -RELAPDTC, -GVHDDTC, -REFSTDTC, -TRSTDTC, -TRENDTC, -ALIVE, -LOT, -RELAPYN) %>% 
+  filter(REF != "NA") %>%
+  filter(ATCN == "steroids") %>% 
+  select(-ATCN)
+```
+
+```{r}
+ref_binaric %>% glimpse()
+```
+
+```{r}
+ref_binaric %>% count(REF)
+ref_binaric %>% tbl_summary(by = REF)
+ref_binaric %>% 
+  select(where(is.factor)) %>% 
+  map(function(x) sum(is.na(x))/length(x))
+ref_binaric %>% 
+  select(where(is.factor)) %>% 
+  map(table)
+```
+
+```{r}
+ref_binaric %>% 
+  drop_na() -> ref_binaric
+Boruta(REF~.,ref_binaric, ntree = 1000, maxRuns = 100) %>% 
+  TentativeRoughFix() -> boruta_trained
+
+boruta_trained %>% 
+  attStats() %>% 
+  rownames_to_column("Переменная") %>% 
+  ggplot(aes(y = Переменная, x = meanImp, color = decision)) +
+  geom_point() +
+  geom_errorbar(aes(xmin = minImp, xmax = maxImp, width = 0.1)) +
+  xlab('Среднее значение энтропии') +
+  labs(color = 'Значимость переменной') +
+  scale_color_discrete(labels = c('Подтвержденная','Неподтвержденная'))
+```

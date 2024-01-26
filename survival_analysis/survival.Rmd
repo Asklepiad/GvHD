@@ -1,0 +1,252 @@
+---
+title: "Untitled"
+author: "Ivan Lebedev"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r}
+knitr::opts_chunk$set(echo = TRUE)
+library(survival)
+library(cmprsk)
+library(tidycmprsk)
+library(ggsurvfit)
+library(tidyverse)
+library(survminer)
+library(finalfit)
+```
+
+
+```{r setup, include=FALSE}
+rs <- 
+  fnet$RS_20230119_120304 %>% 
+  select(-SITE,-SUBJID) 
+nrow(rs)
+str(rs)
+
+hd <- fnet$GVHD_20230119_120304 %>%
+  filter(GVHDYN == "yes") %>% 
+  filter(!GVHDCAT == "Cross syndrome")
+nrow(hd)
+str(hd)
+
+df_surv <- hd %>% 
+  bind_cols(rs) %>% 
+  rename("TRIND" = GVHDCAT) %>% 
+  select(-SITE,-GVHDDTC,-GVHDAGE,-GVHDMETH)
+
+common_df_disease_surv <- 
+  common_df_disease %>% 
+  filter(!TRIND == "cross syndrome") %>% 
+  arrange(SUBJID)
+nrow(common_df_disease_surv)
+
+df_surv_an <- common_df_disease_surv %>% 
+  bind_cols(df_surv)
+
+df_surv_an <- df_surv_an %>% 
+  mutate(
+  TDINTER = (as.Date(GVHDDTC,        ## От пересадки до РТПХ
+                     format = "%d.%m.%Y") - as.Date(TRDTC, 
+                                                    format = "%d.%m.%Y")) %>% 
+    as.character %>%
+    as.numeric,
+  DINTER = (as.Date(DEATHDTC,        ## От РТПХ до смерти
+                       format = "%d.%m.%Y") - as.Date(GVHDDTC, 
+                                                      format = "%d.%m.%Y")-31) %>% 
+    as.character %>%
+    as.numeric,
+  LINTER = (as.Date(LCDTC,        ## От РТПХ до цензурирования
+                       format = "%d.%m.%Y") - as.Date(GVHDDTC, 
+                                                      format = "%d.%m.%Y")-31) %>% 
+    as.character%>%
+    as.numeric,
+  RElINTER = (as.Date(RELAPDTC,        ## От РТПХ до рецидива
+                    format = "%d.%m.%Y") - as.Date(GVHDDTC, 
+                                                   format = "%d.%m.%Y")) %>% 
+    as.character%>%
+    as.numeric)
+```
+
+
+```{r}
+df_surv_an <- df_surv_an %>% 
+  mutate(RELAPYN = ifelse(
+  RELAPYN == "yes", 1, 0)) %>% 
+  mutate(ALIVE = case_when(
+    ALIVE == "alive" ~ 0, 
+    ALIVE == "died" ~ 1,
+    ALIVE == "unknown" ~ NA)) %>% 
+    unite("futime",LINTER,DINTER, na.rm = T) %>%  
+  mutate(etime = ifelse(RELAPYN == 0, futime, 
+    ifelse(RElINTER < 0, futime, RElINTER)) %>% as.numeric) %>%
+  mutate(event = ifelse(
+    RELAPYN == 0, ALIVE, 
+    ifelse(RElINTER < 0, ALIVE, 2)) %>% as.factor) %>% 
+  mutate(event = factor(event, 0:2, labels=c("censor", "death", "rel"))) %>%
+  mutate(REF = 
+           case_when(REFSTYN == "yes" ~ "yes", 
+                     REFSTYN == "no" ~ "no",
+                     REFSTYN == "stated subjectively" ~ NA,
+                     REFSTYN == "impossible to state" ~ NA)) %>%
+  select(-SUBJID...47, -TRIND...48) %>% 
+  rename(TRIND = `TRIND...46`, SUBJID = SUBJID...2) %>% 
+  select(-BIRTHDTC,-PSOCN,-PRSCHEM,-COND, -GVHDYN, -CGVHDOCC, -AGVHDOCC, -REFSTYN,-GVHDOTHM,-REFSTLOT,-GVHDMETH,-RElINTER) %>%
+  mutate(futime = as.numeric(futime)) %>% 
+  mutate(PTN =  ifelse(PTN == "ACUTE LYMPHOCYTIC LEUKAEMIA",
+                       "ACUTE LYMPHOCYTIC LEUKAEMIA", 
+                       ifelse(PTN == "ACUTE MYELOID LEUKAEMIA", 
+                              "ACUTE MYELOID LEUKAEMIA",
+                              "OTHER"))) %>%
+  select(-TDINTER)  %>% 
+  unite("GVHDGRADE",PTSTAT, AGVHDGR, na.rm = T) %>%
+  unite("GVHD_GT",acute_LGT, chronic_GT, na.rm = T) %>%
+  unite("GVHD_Skin",acute_Skin, chronic_Skin_perc, na.rm = T) %>%
+  unite("GVHD_Liver",acute_Liver, chronic_Liver, na.rm = T) %>%
+  mutate(HATGDOSE =  ifelse(HATGDOSE == "0",
+                       "0", "1"),
+         TIMGDOSE = ifelse(TIMGDOSE == "0",
+                           "0", "1")) %>% 
+  mutate(TRNUM = ifelse(TRNUM == "1",
+                           "1", "2+"),
+         across(c(PTN, TIMGDOSE, HATGDOSE, TRNUM, GVHDGRADE, GVHD_GT, GVHD_Skin, GVHD_Liver, ALIVE, TRIND, REF), ~as.factor(.x))) %>% 
+  filter(futime >= 0)
+```
+
+```{r}
+g <- c("first")
+for (i in 2:nrow(df_surv_an)) {
+  if((df_surv_an$SUBJID[i] %in% df_surv_an$SUBJID[i-1] == T) && (df_surv_an$TRIND[i-1] == "acute GVHD") && (df_surv_an$TRIND[i] == "chronic GVHD")){
+    g <- c(g,"second")
+  }
+  else{
+    g <- c(g,"first")
+  }
+}
+
+df_surv_an %>% 
+  bind_cols(g) %>% 
+  rename(FS = `...41`) %>% 
+  mutate(FS = as.factor(FS)) -> df_surv_an
+```
+
+
+```{r}
+df_surv_cl <- 
+  df_surv_an %>% 
+  select(-SITE,-PRENDTC,-LCDTC,-DEATHDTC,-RELAPYN,-RELAPDTC,-GVHDDTC) %>% 
+  filter(!TRIND == "cross syndrome")
+
+for (i in 1:nrow(df_surv_cl)) {
+  if((df_surv_cl$SUBJID[i] %in% df_surv_cl$SUBJID[i+1] == T)){
+    df_surv_cl <- df_surv_cl[-i, ]
+  }
+}
+```
+
+```{r}
+CM <- fnet$CM_20230119_120304 %>% 
+  mutate(ATCN = case_when(ATCN == "GLUCOCORTICOIDS" ~ "steroids", 
+                          ATCN == "CORTICOSTEROIDS, POTENT (GROUP III)" ~ "steroids",
+                          ATCN == "CORTICOSTEROIDS FOR SYSTEMIC USE" ~ "steroids",
+                          ATCN == "CORTICOSTEROIDS, DERMATOLOGICAL PREPARATIONS" ~ "steroids",
+                          ATCN == "JANUS-ASSOCIATED KINASE (JAK) INHIBITORS" ~ "jak",
+                          ATCN == "CALCINEURIN INHIBITORS" ~ "calin",
+                          ATCN == "OTHER IMMUNOSUPPRESSANTS" ~ "other",
+                          ATCN == "INTERLEUKIN INHIBITORS" ~ "other",
+                          ATCN == "SELECTIVE IMMUNOSUPPRESSANTS" ~ "other",
+                          ATCN == "BRUTON'S TYROSINE KINASE (BTK) INHIBITORS" ~ "other",
+                          ATCN == "BCR-ABL TYROSINE KINASE INHIBITORS" ~ "other",
+                          ATCN == "TUMOR NECROSIS FACTOR ALPHA (TNF-) INHIBITORS" ~ "other",
+                          ATCN == "INTERLEUKINS" ~ "other",
+                          ATCN == "IMIDAZOLE DERIVATIVES" ~ "other",
+                          ATCN == "NA" ~ NA)) %>% 
+  select(ATCN, SUBJID, LOT, TRIND, TRSTDTC, TRENDTC)
+
+df_surv_cl <- 
+  left_join(df_surv_cl, 
+            CM,
+            by = c("SUBJID", "TRIND")) %>% 
+  mutate(
+    across(c(TRSTDTC, TRENDTC,REFSTDTC), ~ format(as.Date(.x, format = "%d/%m/%Y"), "%d.%m.%Y")),
+    across(c(ATCN, LOT, TRIND), ~as.factor(.x))) %>%
+  mutate(Prof = (as.Date(PRSTDTC, format = "%d.%m.%Y") - as.Date(TRDTC, format = "%d.%m.%Y")) %>% 
+           as.character %>% 
+           as.numeric,
+         Treat = (as.Date(TRENDTC, format = "%d.%m.%Y") - as.Date(TRSTDTC, format = "%d.%m.%Y")) %>%
+           as.character %>% 
+           as.numeric
+         ) %>% 
+  distinct(SUBJID, .keep_all = TRUE) %>%
+  mutate(REF_landmark = (as.Date(REFSTDTC, format = "%d.%m.%Y") - as.Date(TRSTDTC, format = "%d.%m.%Y")) %>% 
+           as.character %>% 
+           as.numeric) %>% 
+  select(-PRSTDTC, -TRDTC, -REFSTDTC, -TRSTDTC, -TRENDTC) %>% 
+  mutate(REF_landmark = ifelse(REF_landmark <= 31,"yes","no"),
+         REF_landmark = as.factor(REF_landmark)) %>% 
+  mutate(REF_landmark = ifelse(REF == "no", "no",
+                                ifelse(REF_landmark == "yes", "yes",
+                                       ifelse(REF_landmark == "no", "no", NA))),
+         REF_landmark = as.factor(REF_landmark))
+  
+
+table(df_surv_cl$event)
+```
+
+
+```{r}
+df_surv_cl_full <- 
+  df_surv_cl %>% 
+  select(-c(contains("chronic_"),SEVGRADE,SEVTYPE,contains("acute_")))
+df_surv_cl_ac <- 
+  df_surv_cl %>% 
+  filter(TRIND == "acute GVHD") %>% 
+  select(-c(contains("chronic_"),SEVGRADE,SEVTYPE,TRIND,FS))
+df_surv_cl_ch <- 
+  df_surv_cl %>% 
+  filter(TRIND == "chronic GVHD") %>% 
+  select(-contains("acute_"), -TRIND)
+
+table(df_surv_cl_full$event)
+table(df_surv_cl_ac$event)
+table(df_surv_cl_ch$event)
+```
+```{r}
+df_surv_cl_full %>% glimpse()
+```
+
+```{r}
+mod1 <- tidycmprsk::crr(Surv(etime, event) ~ SEX+PTN+TRNUM+TRTYPE+GVHDAGE+GVHDGRADE+TRIND+FS+GVHD_GT+REF_landmark, 
+                failcode = "death", 
+                cencode = "censor", 
+                df_surv_cl_full)
+mod1
+tbl <- 
+  mod1 %>%
+  gtsummary::tbl_regression(exponentiate = TRUE) %>%
+  gtsummary::add_global_p(anova_fun = gtsummary::tidy_wald_test) %>%
+  add_n(location = "level") %>% as_gt()
+tbl
+```
+
+```{r}
+cuminc(Surv(etime, event) ~ REF_landmark, data=df_surv_cl_full)
+
+cuminc(Surv(etime, event) ~  REF_landmark, data=df_surv_cl_full) %>% 
+  ggcuminc() + 
+  labs(x = "Days") + 
+  add_risktable() +
+  scale_ggsurvfit()+
+  add_confidence_interval()
+```
+```{r}
+tbl_crr <- 
+  cuminc(Surv(etime, event) ~ REF_landmark, data=df_surv_cl_full) %>%
+  tbl_cuminc(times = c(31, 62, 93), label_header = "**Days {time}**") %>%
+  add_p() %>%
+  add_n() %>% as_gt()
+tbl_crr
+```
+
+
+
