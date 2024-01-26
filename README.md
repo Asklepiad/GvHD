@@ -21,19 +21,37 @@ Placeholder: Short description of the project.
 
 ## Structure of repository
 
+There are four directories in repo.
+
+1. `raw_data`: the folder contains the data we had at the start point of analysis. You can reproduce our way of analysis (or do your own instead), using these datasets.
+
+2. Placeholder: checking and adding data from Ivan `survival_analysis`: the folder contains one script that performed survival analysis (and, especially landmark and concurrent risks analysis).
+
+3. `ml`: different approaches and experiments for finding predictive models for steroid resistance occurrence. There are two boosting realisations (one is R-way and another is python-way), random forest, boruta (for feature selection) and logistic regression (just for fun).
+
+4. `cooked_data`: transformed datasets for use in further analysis
+
+5. In main folder we can found docx file with specifications for source datasets and df_creator.rmd file that created main dataset and cooked datasets, and does EDA.
+
 ## Introduction
 
 ## Aims and objectives
 
+
+
 ## Data
 
 ## Workflow
+
+## EDA
 
 ## Results
 
 ## Discussions
 
 ## Literature
+
+Placeholder: Uniformity of links
 
 > [1] Martin PJ, Schoch G, Fisher L, Byers V, Anasetti C, Appelbaum FR, Beatty PG, Doney K, McDonald GB, Sanders JE, et al. A retrospective analysis of therapy for acute graft-versus-host disease: initial treatment. Blood. 1990 Oct 15;76(8):1464-72. PMID: 2207321.
 
