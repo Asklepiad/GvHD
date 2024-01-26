@@ -9,7 +9,7 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 lapply(c("glue", "tidyverse", "openxlsx", 
          "readxl", "rstatix", "gtsummary",
-         "Hmisc", "ggcorrplot", "psych",
+         "Hmisc", "ggcorrplot", "psych", "dagitty", "ggdag",
          "pheatmap", "kableExtra", "tidymodels", "embed",
          "themis", "vip", "yardstick", "Boruta", "catboost"), require, character.only=TRUE)
 ```
@@ -362,9 +362,9 @@ common_df_patient %>% arrange(TRDTC)
 
 ggplot(common_df_patient)+
   geom_histogram(aes(x = TRDTC), bins = ceiling(log2(nrow(common_df_patient)) + 1), fill = "green", color = "black")+
-  labs(x = "Дата пересадки",
-       y = "Количество пересадок",
-       title = "Рис. 1 Распределение числа пересадок костного мозга\nза время наблюдения")+
+  labs(x = "Transplantation date",
+       y = "Count",
+       title = "Fig. 1 Transplantations distribution during the trial")+
   theme_bw()+
   theme(axis.text.x = element_text(size=20),
       axis.text.y = element_text(size=20),
@@ -385,20 +385,20 @@ common_df_treatment %>%
 
 common_df_treatment$ATCNA %>% unique
 
-# common_df_treatment %>% 
+# common_df_treatment %>%
 # select(SUBJID, STERRES) %>%
 #   distinct %>% pull(STERRES) %>% table
-#   ggplot()+
-#   geom_histogram(aes(x = GVHDAGE), bins = ceiling(log2(nrow(common_df_treatment)) + 1), fill = "green", color = "black")+
-#   labs(x = "Возраст пациента",
-#        y = "Количество пациентов",
-#        title = "Рис. 2 Распределение возраста пациентов")+
-#   theme_bw()+
-#   theme(axis.text.x = element_text(size=20),
-#       axis.text.y = element_text(size=20),
-#       axis.title.x = element_text(size=25),
-#       axis.title.y = element_text(size=25),
-#       plot.title = element_text(size=32, hjust=0.5))
+  ggplot(common_df_treatment)+
+  geom_histogram(aes(x = GVHDAGE), bins = ceiling(log2(nrow(common_df_treatment)) + 1), fill = "green", color = "black")+
+  labs(x = "Age",
+       y = "Count",
+       title = "Fig. 2 Distribution of patients age")+
+  theme_bw()+
+  theme(axis.text.x = element_text(size=20),
+      axis.text.y = element_text(size=20),
+      axis.title.x = element_text(size=25),
+      axis.title.y = element_text(size=25),
+      plot.title = element_text(size=32, hjust=0.5))
 #   
 # common_df_disease %>% 
 #   GVHDAGE
@@ -491,6 +491,43 @@ common_df_treatment_chronic_new <- common_df_treatment_new %>%
 common_df_treatment_cross_new <- common_df_treatment_new %>% 
   filter(TRIND == "cross syndrome")
 ```
+
+```{r}
+common_df_disease_chronic %>% 
+  filter()
+common_df_disease %>% 
+  filter(REFSTYN %in% c("yes", "no")) %>% nrow()
+```
+
+# DAG
+```{r}
+# Loading necessary libraries 
+library() 
+library(ggdag)  
+# Creating a DAG using a DAGitty 
+dag <- dagitty('dag {   "Survivability" <- "Allogeneic Transplant Type"   "Survivability" <- "Severity of GVHD"   "Survivability" <- "Acute/Chronic GVHD"   "Survivability" <- "Relapse" -> "Number of Transplants"   "Survivability" <- "Disease" -> "Number of Transplants"   "Survivability" <- "Number of Transplants"   "Survivability" <- "Sex"   "Survivability" <- "Age"   "Refractoriness" <- "Age" -> "Acute/Chronic GVHD"   "Refractoriness" <- "Severity of GVHD" -> "Acute/Chronic GVHD"   "Refractoriness" <- "Allogeneic Transplant Type" }')  
+# Calculating the minimum set of variables to estimate the direct effect of 'Allogeneic Transplant Type' on 'Survivability' 
+adjustment_set <- adjustmentSets(dag, exposure = "Allogeneic Transplant Type", outcome = "Survivability")  
+# Visualization of DAG using ggdag for better visualization 
+ggdag(dag) +   
+  theme_dag() +   
+  theme(panel.background = element_rect(fill = NA)) +  
+  # Set transparent background   
+  scale_x_discrete(expand = c(0.2, 0.2)) + 
+  # Adjust spacing if needed   
+  scale_y_discrete(expand = c(0.2, 0.2)) + 
+  # Adjust spacing if needed   
+  geom_dag_point(colour = "yellow", fill = "white") + 
+  # Set nodes to white   
+  geom_dag_edges(colour = "yellow") + 
+  # Set edges to white   
+  geom_dag_text(color = "black")  
+# Set text color to red for visibility  
+# Save the DAG with a transparent background 
+#ggsave("../images/dag.png", bg = "transparent")
+```
+
+
 
 
 # EDA
@@ -741,9 +778,9 @@ numeric_treatment_cross_table <- common_df_treatment %>% filter(TRIND == "cross 
 bar_custom <- function(df, variable, filt="green"){
   ggplot(df)+
     geom_bar(aes(x = pull(df[variable])), fill=filt, colour="black")+
-    labs(x = glue("Градации переменной {variable}"),
-       y = "Количество",
-       title = glue("Частоты единиц наблюдения по категориям\nпеременной {variable}"))+
+    labs(x = glue("Gradations of {variable}"),
+       y = "Count",
+       title = glue("Object number by\ngradations of {variable}"))+
     theme_bw()+
     theme(axis.text.x = element_text(size=14, angle = 25),
           axis.text.y = element_text(size=14),
@@ -773,10 +810,10 @@ bar_dodge <- function(df, variable1, variable2){
                  fill = pull(df[variable1]),#{{ variable1 }},
                  group = pull(df[variable1])), position = "dodge")+#{{ variable1 }}), position = "dodge")+
     geom_errorbar(data = subdf, aes(x = data1, ymin = CId, ymax = CIu, group = data2), position="dodge")+
-    labs(x = glue("Градации переменной {axis_x}"),
-         y = "Количество",
-       fill =  glue("Градации переменной {axis_fill}"),
-       title = glue("Количество единиц наблюдения по категориям\nпеременной {axis_x} и {axis_fill}"))+
+    labs(x = glue("Gradations of {axis_x}"),
+         y = "Count",
+       fill =  glue("Gradations of {axis_fill}"),
+       title = glue("Object number\nby gradations of {axis_x} and {axis_fill}"))+
     theme_bw()+
     theme(axis.text.x = element_text(size=14, angle = 25),
           axis.text.y = element_text(size=14),
@@ -881,6 +918,7 @@ ann_cddc_palette <- list(
 )
 
 # Создадим фитмэп
+## Почему-то руинится в новой версии
 common_df_disease_chronic %>% 
   select(starts_with("chronic")) %>% 
   mutate(across(starts_with("chronic"), as.numeric)) %>% 
@@ -1013,6 +1051,7 @@ ann_cddc_palette <- list(
 )
 
 # Создадим фитмэп
+## Тоже руинится
 common_df_disease_acute %>% 
   select(starts_with("acute")) %>% 
   mutate(across(starts_with("acute"), as.numeric)) %>% 
@@ -1340,9 +1379,9 @@ numeric_treatment_cross_table <- common_df_treatment %>% filter(TRIND == "cross 
 bar_custom <- function(df, variable, filt="green"){
   ggplot(df)+
     geom_bar(aes(x = pull(df[variable])), fill=filt, colour="black")+
-    labs(x = glue("Градации переменной {variable}"),
-       y = "Количество",
-       title = glue("Частоты единиц наблюдения по категориям\nпеременной {variable}"))+
+    labs(x = glue("Gradations of {variable}"),
+       y = "Count",
+       title = glue("Objects number\nby gradations of {variable}"))+
     theme_bw()+
     theme(axis.text.x = element_text(size=14, angle = 25),
           axis.text.y = element_text(size=14),
@@ -1372,10 +1411,10 @@ bar_dodge <- function(df, variable1, variable2){
                  fill = pull(df[variable1]),#{{ variable1 }},
                  group = pull(df[variable1])), position = "dodge")+#{{ variable1 }}), position = "dodge")+
     geom_errorbar(data = subdf, aes(x = data1, ymin = CId, ymax = CIu, group = data2), position="dodge")+
-    labs(x = glue("Градации переменной {axis_x}"),
-         y = "Количество",
-       fill =  glue("Градации переменной {axis_fill}"),
-       title = glue("Количество единиц наблюдения по категориям\nпеременной {axis_x} и {axis_fill}"))+
+    labs(x = glue("Gradations of {axis_x}"),
+         y = "Count",
+       fill =  glue("Gradations of {axis_fill}"),
+       title = glue("Objects number\nby gradations of {axis_x} and {axis_fill}"))+
     theme_bw()+
     theme(axis.text.x = element_text(size=14, angle = 25),
           axis.text.y = element_text(size=14),
@@ -1401,10 +1440,10 @@ common_df_disease_acute %>%
   filter(ALIVE %in% c("alive", "died")) %>% 
 ggplot()+
   geom_bar(aes(x = RELAPYN, fill = ALIVE), position="fill")+
-  scale_x_discrete(name = "Наличие рецидива", labels = c("Нет рецидива", "Нет данных", "Рецидив"))+
-  scale_fill_discrete(name = "Выжил ли пациент", labels = c("Выжил", "Не выжил"))+
-  labs(y = "Доля",
-       title = "Доля выживших больных острой формой РТПХ\nв зависимости от факта наличия рецидива")+
+  scale_x_discrete(name = "Relapse data", labels = c("No relapse", "No data", "Relapse"))+
+  scale_fill_discrete(name = "Alive or died?", labels = c("Alive", "Died"))+
+  labs(y = "Proportion",
+       title = "Aives proportion of patients with acute GvHD\ndepending on the presence of relapse")+
     theme_bw()+
     theme(axis.text.x = element_text(size=30),
           axis.text.y = element_text(size=30),
@@ -1418,10 +1457,10 @@ common_df_disease_chronic %>%
   filter(ALIVE %in% c("alive", "died")) %>% 
 ggplot()+
   geom_bar(aes(x = RELAPYN, fill = ALIVE), position="fill")+
-  scale_x_discrete(name = "Наличие рецидива", labels = c("Нет рецидива", "Нет данных", "Рецидив"))+
-  scale_fill_discrete(name = "Выжил ли пациент", labels = c("Выжил", "Не выжил"))+
-  labs(y = "Доля",
-       title = "Доля выживших больных хронической формой РТПХ\nв зависимости от факта наличия рецидива")+
+  scale_x_discrete(name = "Relapse data", labels = c("No relapse", "No data", "Relapse"))+
+  scale_fill_discrete(name = "Alive or died?", labels = c("Alive", "Died"))+
+  labs(y = "Proportion",
+       title = "Aives proportion of patients with chronic GvHD\ndepending on the presence of relapse")+
     theme_bw()+
     theme(axis.text.x = element_text(size=30),
           axis.text.y = element_text(size=30),
@@ -1435,10 +1474,10 @@ common_df_disease_acute %>%
   filter(ALIVE %in% c("alive", "died")) %>% 
 ggplot()+
   geom_bar(aes(x = TRTYPE, fill = ALIVE), position="fill")+
-  scale_x_discrete(name = "Тип донора")+
-  scale_fill_discrete(name = "Выжил ли пациент", labels = c("Выжил", "Не выжил"))+
-  labs(y = "Доля",
-       title = "Доля выживших больных острой формой РТПХ\nв зависимости от типа донора")+
+  scale_x_discrete(name = "Donor type")+
+  scale_fill_discrete(name = "Alive or died?", labels = c("Alive", "Died"))+
+  labs(y = "Proportion",
+       title = "Alives proportion of patients with acute GvHD\ndepending on donor type")+
     theme_bw()+
     theme(axis.text.x = element_text(size=30),
           axis.text.y = element_text(size=30),
@@ -1452,10 +1491,10 @@ common_df_disease_chronic %>%
   filter(ALIVE %in% c("alive", "died")) %>% 
 ggplot()+
   geom_bar(aes(x = TRTYPE, fill = ALIVE), position="fill")+
-  scale_x_discrete(name = "Тип донора")+
-  scale_fill_discrete(name = "Выжил ли пациент", labels = c("Выжил", "Не выжил"))+
-  labs(y = "Доля",
-       title = "Доля выживших больных хронической формой РТПХ\nв зависимости от типа донора")+
+  scale_x_discrete(name = "Donor type")+
+  scale_fill_discrete(name = "Alive or died?", labels = c("Alive", "Died"))+
+  labs(y = "Proportion",
+       title = "Alives proportion of patients with chronic GvHD\ndepending on donor type")+
     theme_bw()+
     theme(axis.text.x = element_text(size=30),
           axis.text.y = element_text(size=30),
@@ -1469,10 +1508,10 @@ common_df_disease_acute %>%
   filter(ALIVE %in% c("alive", "died")) %>% 
 ggplot()+
   geom_bar(aes(x = AGVHDGR, fill = ALIVE), position="fill")+
-  scale_x_discrete(name = "Тяжесть состояния в момент\nпостановки диагноза")+
-  scale_fill_discrete(name = "Выжил ли пациент", labels = c("Выжил", "Не выжил"))+
-  labs(y = "Доля",
-       title = "Доля выживших больных острой формой РТПХ\nв зависимости от тяжести исходного состояния")+
+  scale_x_discrete(name = "Severity in time of diagnosis")+
+  scale_fill_discrete(name = "Alive or died?", labels = c("Alive", "Died"))+
+  labs(y = "Proportion",
+       title = "Alives proportion of patients with acute GvHD\ndepending on severity grade in time of diagnosis")+
     theme_bw()+
     theme(axis.text.x = element_text(size=30),
           axis.text.y = element_text(size=30),
@@ -1486,10 +1525,10 @@ common_df_disease_chronic %>%
   filter(ALIVE %in% c("alive", "died")) %>% 
 ggplot()+
   geom_bar(aes(x = PTSTAT, fill = ALIVE), position="fill")+
-  scale_x_discrete(name = "Тяжесть состояния в момент\nпостановки диагноза",)+
-  scale_fill_discrete(name = "Выжил ли пациент", labels = c("Выжил", "Не выжил"))+
-  labs(y = "Доля",
-       title = "Доля выживших больных хронической формой РТПХ\nв зависимости от тяжести исходного состояния")+
+  scale_x_discrete(name = "Severity grade in time of diagnosis")+
+  scale_fill_discrete(name = "Alive or not alive?", labels = c("Alive", "Died"))+
+  labs(y = "Proportion",
+       title = "Alives proportion of patients with chronic GvHD\ndepending on severity grade in time of diagnosis")+
     theme_bw()+
     theme(axis.text.x = element_text(size=30),
           axis.text.y = element_text(size=30),
@@ -1503,10 +1542,10 @@ common_df_disease_chronic %>%
   filter(ALIVE %in% c("alive", "died")) %>% 
 ggplot()+
   geom_bar(aes(x = chronic_GT, fill = ALIVE), position="fill")+
-  scale_x_discrete(name = "Степень тяжести поражения ЖКТ\nв момент постановки диагноза")+
-  scale_fill_discrete(name = "Выжил ли пациент", labels = c("Выжил", "Не выжил"))+
-  labs(y = "Доля",
-       title = "Доля выживших больных хронической формой РТПХ\nв зависимости от тяжести поражения ЖКТ")+
+  scale_x_discrete(name = "Severity grade of GIT in time of diagnosis")+
+  scale_fill_discrete(name = "Alive or died?", labels = c("Alive", "Died"))+
+  labs(y = "Proportion",
+       title = "Alives proportion of patients with chronic GvHD\ndepending on GIT severity grade in time of diagnosis")+
     theme_bw()+
     theme(axis.text.x = element_text(size=30),
           axis.text.y = element_text(size=30),
@@ -1521,10 +1560,10 @@ common_df_treatment_acute %>%
          ALIVE %in% c("alive", "died")) %>% 
 ggplot()+
   geom_bar(aes(x = ALIVE, fill = STERRES), position="fill")+
-  scale_x_discrete(name = "Выжил ли пациент")+
-  scale_fill_discrete(name = "Факт развития резистентности", labels = c("Нет резистентности", "Есть резистентность"))+
-  labs(y = "Доля",
-       title = "Доля пациентов с развивишейся резистентностью к ГКС\nв подгруппах выживыших и невыживших пациентов")+
+  scale_x_discrete(name = "ALive or died?")+
+  scale_fill_discrete(name = "Steroid resistance", labels = c("No resistance", "Resistance"))+
+  labs(y = "Proportion",
+       title = "Patients with GCS resistance proportion\namong alived and died patients")+
     theme_bw()+
     theme(axis.text.x = element_text(size=30),
           axis.text.y = element_text(size=30),
@@ -1538,10 +1577,10 @@ common_df_treatment_acute %>%
   filter(STERRES %in% c("resistance", "no resistance")) %>% 
 ggplot()+
   geom_bar(aes(x = AGVHDGR, fill = STERRES), position="fill")+
-  scale_x_discrete(name = "Степень тяжести состояния пациента\nв момент постановки даигноза")+
-  scale_fill_discrete(name = "Факт развития резистентности", labels = c("Нет резистентности", "Есть резистентность"))+
-  labs(y = "Доля",
-       title = "Доля пациентов с развивишейся резистентностью к ГКС\nв зависимости от состояния пациента")+
+  scale_x_discrete(name = "Severity grade in time of diagnosis")+
+  scale_fill_discrete(name = "Steroid resistance", labels = c("No resistance", "Resistance"))+
+  labs(y = "Proportion",
+       title = "Patients with GCS resistance proportion\ndepending on severity grade in time of diagnosis")+
     theme_bw()+
     theme(axis.text.x = element_text(size=30),
           axis.text.y = element_text(size=30),
