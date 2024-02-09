@@ -58,7 +58,7 @@ More detailed information about the input data can be found in the `GVHD_Specifi
 
 The principal scheme of workflow is illustrated in Fig.1
 
-![Fig. 1 Principal scheme of workflow]()
+![Fig. 1 Principal scheme of workflow](https://github.com/Asklepiad/GvHD/blob/main/workflow_GvHD.jpg)
 
 ## EDA
 
