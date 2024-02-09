@@ -60,14 +60,20 @@ The principal scheme of workflow is illustrated in Fig.1
 
 ![Fig. 1 Principal scheme of workflow](https://github.com/Asklepiad/GvHD/blob/main/workflow_GvHD.jpg)
 
+1. Creating datasets from ADAM-like files. We created twelve long-form datasets for three levels: four for the treatment level (unit of observation -- one drug prescribtion), four for the disease level (unit of observation -- one diagnosis), four for the patient level (unit of observation -- one person), and ~~one dataset to rull them all~~. Four datasets for every level were common dataset, dataset with acute GVHD cases only, dataset with chronuc GVHD cases only and dataset with cross-syndrome (transitional stage between acute and chronic GVHD).
+
+2. Performing EDA, descriptive statistics and NA analysis.
+
+3. Survival analysis (rate mortality).
+
+4. ML (steroid resistance)
+
 ## EDA
 
 No new insights were found after EDA, but we make sure our data have similar properties with other investigations in this field.
 As an example -- patients with a more severe gastrointestinal lesion at the time of diagnosis had a worse mortality rate. People with non-relative haplo-matched donors also have worse prognoses by survival and steroid resistance.
 
 More interesting details and figures you can found [after paying for annual subscription](https://boosty.to/bioinf) or in the `df_creation.html` file in the "EDA" section. But subscription is a preferred option.
-
-## Methods
 
 ### Survival analysis
 
@@ -81,7 +87,22 @@ More interesting details and figures you can found [after paying for annual subs
 > Random forest
 
 > Catboost
+
 We tried to implement categorial boosting to predict the fact of resistance. We used the MICE algorithm for imputing missing values, optuna tool for choosing the best hyperparameters, and the catboost itself for evaluating the analysis. The metric we will maximize in the process of training is sensitivity (also widely known by the alias "recall"). Our sensitivity on the test dataset was 0.22. More interesting details can be found in [`the appropriate file`](https://github.com/Asklepiad/GvHD/blob/main/ml/Forest_Gump.ipynb).
+
+Soft
++ Language: Python 3.9.13
++ Packages:
+matplotlib==3.8.0
+miceforest==5.7.0
+nafig==1.0.1
+optuna==3.5.0
+pandas==1.5.3
+sklearn==1.3.2
+seaborn==0.12.2
+numpy==1.24.2
+
+
 
 
 > HGBM
