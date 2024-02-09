@@ -65,7 +65,7 @@ The principal scheme of workflow is illustrated in Fig.1
 No new insights were found after EDA, but we make sure our data have similar properties with other investigations in this field.
 As an example -- patients with a more severe gastrointestinal lesion at the time of diagnosis had a worse mortality rate. People with non-relative haplo-matched donors also have worse prognoses by survival and steroid resistance.
 
-More interesting details and figures you can found ~~after paying for annual subscription~~ in the `df_creation.html` file in the "EDA" section.
+More interesting details and figures you can found ~~[after paying for annual subscription](https://boosty.to/bioinf)~~ in the `df_creation.html` file in the "EDA" section.
 
 ## Results
 
