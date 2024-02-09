@@ -81,7 +81,8 @@ More interesting details and figures you can found [after paying for annual subs
 > Random forest
 
 > Catboost
-We tried to implement categorial boosting for
+We tried to implement categorial boosting to predict the fact of resistance. We used the MICE algorithm for imputing missing values, optuna tool for choosing the best hyperparameters, and the catboost itself for evaluating the analysis. The metric we will maximize in the process of training is sensitivity (also widely known by the alias "recall"). Our sensitivity on the test dataset was 0.22. More interesting details can be found in [the appropriate file]() file.
+
 
 > HGBM
 
