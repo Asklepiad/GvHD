@@ -42,7 +42,9 @@ One of the main strategies for GvHD treatment is using of glucocorticoids. It is
 
 ## Aims and objectives
 
-
+1. Searching the potential associations of glucocorticoid refractory.
+2. Survival analysis.
+3. Creating a predictive model for glucocorticoid refractory occurrence. 
 
 ## Data
 
