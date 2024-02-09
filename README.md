@@ -67,6 +67,24 @@ As an example -- patients with a more severe gastrointestinal lesion at the time
 
 More interesting details and figures you can found [after paying for annual subscription](https://boosty.to/bioinf) or in the `df_creation.html` file in the "EDA" section. But subscription is a preferred option.
 
+## Methods
+
+### Survival analysis
+
+
+### ML
+
+> Boruta
+
+> Lasso
+
+> Random forest
+
+> Catboost
+We tried to implement categorial boosting for
+
+> HGBM
+
 ## Results
 
 ## Discussions
@@ -88,4 +106,11 @@ Placeholder: Uniformity of links
 > [6] D’Souza, A. Current Uses and Outcomes of Hematopoietic Cell Transplantation (HCT): CIBMTR Summary Slides / A. D’Souza, C. Fretham — 2017. Available at: www.cibmtr.org, as of 28/07/18
 
 > [7] Carreras E, Dufour C, Mohty M, Kröger N, editors. The EBMT Handbook: Hematopoietic Stem Cell Transplantation and Cellular Therapies [Internet]. 7th ed. Cham (CH): Springer; 2019. PMID: 32091673.
+
+## Authors
+
+- Ivan Lebedev
+- Elizaveta Melnichuk
+- Bogdan Sotnikov
+- Yuliia Trifonova
 
