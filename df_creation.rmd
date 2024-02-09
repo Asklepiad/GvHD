@@ -528,6 +528,9 @@ ggdag(dag) +
 ```
 
 
+```{r}
+common_df_disease$REFSTYN %>% table()
+```
 
 
 # EDA
