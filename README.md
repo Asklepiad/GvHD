@@ -52,7 +52,13 @@ Data was provided by the Research Institute of Children Oncology, Hematology and
 
 There were 18 ADAM-like xlsx files (10 source data files and 8 derivatives) which contained data about demography, preventive care, treatment, resistance to glucocorticoids, and other helpful information.
 
+More detailed information about the input data can be found in the `GVHD_Specification.docx` file in this repository.
+
 ## Workflow
+
+The principal scheme of workflow is illustrated in Fig.1
+
+![Fig. 1 Principal scheme of workflow]()
 
 ## EDA
 
