@@ -48,6 +48,10 @@ One of the main strategies for GvHD treatment is using of glucocorticoids. It is
 
 ## Data
 
+Data was provided by the Research Institute of Children Oncology, Hematology and Transplantology named after R.M. Gorbacheva.
+
+There were 18 ADAM-like xlsx files (10 source data files and 8 derivatives) which contained data about demography, preventive care, treatment, resistance to glucocorticoids, and other helpful information.
+
 ## Workflow
 
 ## EDA
