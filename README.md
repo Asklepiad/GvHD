@@ -21,7 +21,7 @@ Placeholder: Short description of the project.
 
 ## Structure of repository
 
-There are four directories in repo.
+There are four directories in the repo.
 
 1. `raw_data`: the folder contains the data we had at the start point of analysis. You can reproduce our way of analysis (or do your own instead), using these datasets.
 
@@ -31,15 +31,26 @@ There are four directories in repo.
 
 4. `cooked_data`: transformed datasets for use in further analysis
 
-5. In main folder we can found docx file with specifications for source datasets and df_creator.rmd file that created main dataset and cooked datasets, and does EDA.
+5. In the main folder we can find a docx file with specifications for source datasets and df_creator.rmd file that created the main dataset and cooked datasets, and does EDA.
 
 ## Introduction
 
+Different blood and bone marrow disease treatment is a bone marrow transplantation. One of the main adverse effects of such treatment is graft vs host disease (GvHD). This adverse effect appears in 30-70% of patients with allogeneic transplantations. It may be acute (if the disease appears in the first 100 days after transplantation) or chronic (if it appears later). The mortality rate of GvHD is nearly 40% for the acute form and nearly 10% for the chronic one.
+
+One of the main strategies for GvHD treatment is using of glucocorticoids. It is the cheapest treatment with fewer adverse effects than more complicated therapy. Sometimes patients demonstrate refractory to glucocorticoids. It may lead to different consequences: more aggressive therapy, 
+
+
 ## Aims and objectives
 
-
+1. Searching the potential associations of glucocorticoid refractory.
+2. Survival analysis.
+3. Creating a predictive model for glucocorticoid refractory occurrence. 
 
 ## Data
+
+Data was provided by the Research Institute of Children Oncology, Hematology and Transplantology named after R.M. Gorbacheva.
+
+There were 18 ADAM-like xlsx files (10 source data files and 8 derivatives) which contained data about demography, preventive care, treatment, resistance to glucocorticoids, and other helpful information.
 
 ## Workflow
 
