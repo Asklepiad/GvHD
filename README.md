@@ -105,8 +105,6 @@ Soft
 
 ## Results
 
-## Discussions
-
 ## Literature
 
 Placeholder: Uniformity of links
