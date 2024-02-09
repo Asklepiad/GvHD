@@ -91,19 +91,15 @@ More interesting details and figures you can found [after paying for annual subs
 We tried to implement categorial boosting to predict the fact of resistance. We used the MICE algorithm for imputing missing values, optuna tool for choosing the best hyperparameters, and the catboost itself for evaluating the analysis. The metric we will maximize in the process of training is sensitivity (also widely known by the alias "recall"). Our sensitivity on the test dataset was 0.22. More interesting details can be found in [`the appropriate file`](https://github.com/Asklepiad/GvHD/blob/main/ml/Forest_Gump.ipynb).
 
 Soft
-+ Language: Python 3.9.13
-+ Packages:
-matplotlib==3.8.0
-miceforest==5.7.0
-nafig==1.0.1
-optuna==3.5.0
-pandas==1.5.3
-sklearn==1.3.2
-seaborn==0.12.2
-numpy==1.24.2
-
-
-
++ Python 3.9.13
++ matplotlib==3.8.0
++ miceforest==5.7.0
++ nafig==1.0.1
++ optuna==3.5.0
++ pandas==1.5.3
++ sklearn==1.3.2
++ seaborn==0.12.2
++ numpy==1.24.2
 
 > HGBM
 
