@@ -125,8 +125,12 @@ Placeholder: Uniformity of links
 
 ## Authors
 
+Students:
 - Ivan Lebedev
 - Elizaveta Melnichuk
 - Bogdan Sotnikov
 - Yuliia Trifonova
 
+Curators:
+- Oleg Arnaut
+- Nikita Volkov
