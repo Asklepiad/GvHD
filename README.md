@@ -1,5 +1,5 @@
 # The Retrospective Analysis of Multicenter Clinical Trial Data on Graft vs Host Disease in Patients Following Bone Marrow Transplantation
-Placeholder: Short description of the project.
+This project is a retrospective analysis of data from a multi-centre clinical trial designed to investigate graft versus host response (GvHD) in patients following bone marrow transplantation. The study aims to identify potential associations with glucocorticoid resistance, analyse the survival of patients with acute and chronic GvHD, and establish a predictive model for glucocorticoid resistance. Based on data from 343 patients, the project includes biostatistical analysis and the application of machine learning methods to assess the impact of various factors on transplant outcomes and to develop personalised treatment strategies to improve bone marrow transplant outcomes and prevent GvHD.
 
 ## Table of content
 
@@ -129,7 +129,7 @@ Students:
 - Ivan Lebedev
 - Elizaveta Melnichuk
 - Bogdan Sotnikov
-- Yuliia Trifonova
+- Iuliia Trifonova
 
 Curators:
 - Oleg Arnaut
